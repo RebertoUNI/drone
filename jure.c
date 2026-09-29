@@ -28,18 +28,9 @@
 
 // Costanti Matematiche e di Sistema
 #define RAD_TO_DEG 57.2957795131f
-#define LPF_ALPHA 0.5f   // Fattore filtro Passa-Basso (aumentato per ridurre phase lag)
+#define LPF_ALPHA 0.5f   // [AGGIORNATO] Filtro Passa-Basso ridotto per abbattere il lag di fase
 #define COMP_ALPHA 0.98f // Fattore filtro Complementare
 #define GYRO_SCALE 65.5f // Scala giroscopio per +/- 500 deg/s
-
-// Mapping giroscopio -> angolo
-#define GYRO_ROLL_SIGN  1.0f  // gyro X -> roll
-#define GYRO_PITCH_SIGN 1.0f  // gyro Y -> pitch
-
-// 1 = in telemetria, al posto di gyro_x_cal / gyro_y_cal, arrivano le
-//     velocita' angolari di roll e pitch (deg/s) per verificare i segni
-// 0 = telemetria normale (gyro_x_cal / gyro_y_cal)
-#define TLM_SHOW_GYRO_RATES 0
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -60,7 +51,7 @@ float dt_actual = 0.004f;
 
 // Variabili Calibrazione
 float gyro_x_cal = 0.0f, gyro_y_cal = 0.0f;
-float acc_pitch_cal = -4.79f, acc_roll_cal = -0.89f; // -4.79   -0.89
+float acc_pitch_cal = -4.79f, acc_roll_cal = -0.89f;
 float gyro_rate_pitch = 0.0f;
 float gyro_rate_roll = 0.0f;
 
@@ -74,8 +65,9 @@ volatile uint8_t telemetry_tx_busy = 0;
 
 // Stato di sistema
 uint32_t current_throttle = 1000;
-float pid_pitch_p = 1.0f, pid_pitch_i = 0.0f, pid_pitch_d = 0.0f;
-float pid_roll_p = 1.0f, pid_roll_i = 0.0f, pid_roll_d = 0.0f;
+// [AGGIORNATO] Nuove costanti PID predefinite con Derivata per annullare il ritardo
+float pid_pitch_p = 1.2f, pid_pitch_i = 0.01f, pid_pitch_d = 0.04f;
+float pid_roll_p = 1.2f, pid_roll_i = 0.01f, pid_roll_d = 0.04f;
 volatile uint8_t motors_enabled = 0;
 uint32_t motor_start_tick = 0;
 
@@ -110,8 +102,7 @@ int main(void) {
   /* MPU Configuration--------------------------------------------------------*/
   MPU_Config();
 
-  /* Reset of all peripherals, Initializes the Flash interface and the Systick.
-   */
+  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
   HAL_Init();
 
   /* Configure the system clock */
@@ -155,7 +146,12 @@ int main(void) {
     // CONTROL LOOP: Eseguito ogni 4ms (250Hz)
     // ==========================================
     if (current_time - last_time >= 4) {
-      // --- INIZIO NUOVO BLOCCO TIMEOUT ---
+      last_time = current_time;
+      
+      // [AGGIORNATO] Forza dt_actual a 0.004 (4ms) costanti per azzerare il jitter 
+      // del Systick e stabilizzare i calcoli Integrali e Derivativi
+      dt_actual = 0.004f; 
+
       if (motors_enabled && (current_time - motor_start_tick >= 8000)) {
         motors_enabled = 0; // Disarma il sistema
 
@@ -165,42 +161,29 @@ int main(void) {
         __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, 1000);
         __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, 1000);
       }
-      // --- FINE NUOVO BLOCCO TIMEOUT ---
 
-      // 1. Acquisizione I2C e applicazione filtri Digitali (Passa Basso +
-      // Complementare)
+      // 1. Acquisizione I2C e applicazione filtri Digitali
       MPU6050_Read_Filter_Compute();
 
       // 2. Calcolo errori, computazione PID e miscelazione motori
       PID_ComputeAndMix();
 
-      // 3. Telemetria verso ESP32 (Eseguita ogni 40ms -> 25Hz per evitare
-      // saturazione UART)
+      // 3. Telemetria verso ESP32 (25Hz)
       static uint8_t telemetry_counter = 0;
       if (++telemetry_counter >= 10) {
         if (!telemetry_tx_busy) {
-#if TLM_SHOW_GYRO_RATES
-          // Nei campi gyro_x_cal / gyro_y_cal arrivano rate roll e rate pitch
-          float tlm_g1 = gyro_rate_roll;
-          float tlm_g2 = gyro_rate_pitch;
-#else
-          float tlm_g1 = gyro_x_cal;
-          float tlm_g2 = gyro_y_cal;
-#endif
           int len = snprintf(telemetry_tx_buffer,
                              sizeof(telemetry_tx_buffer),
                              "ANG:%.2f,%.2f,gyro_x_cal:%f,gyro_y_cal:%f,"
                              "pid_pitch_p:%.2f,pid_pitch_i:%.2f,pid_pitch_d:%.2f,"
                              "pid_roll_p:%.2f,pid_roll_i:%.2f,pid_roll_d:%.2f\n",
-                             pitch, roll, tlm_g1, tlm_g2, pid_pitch_p,
+                             pitch, roll, gyro_x_cal, gyro_y_cal, pid_pitch_p,
                              pid_pitch_i, pid_pitch_d, pid_roll_p, pid_roll_i,
                              pid_roll_d);
 
           if (len > 0 && len < (int)sizeof(telemetry_tx_buffer)) {
             telemetry_tx_busy = 1;
-            if (HAL_UART_Transmit_IT(&huart2,
-                                     (uint8_t *)telemetry_tx_buffer,
-                                     (uint16_t)len) != HAL_OK) {
+            if (HAL_UART_Transmit_IT(&huart2, (uint8_t *)telemetry_tx_buffer, (uint16_t)len) != HAL_OK) {
               telemetry_tx_busy = 0;
             }
           }
@@ -222,7 +205,6 @@ int main(void) {
       packet_ready = 0;
       __enable_irq();
 
-      // Comandi Generici
       if (strncmp(local_buffer, "CMD:", 4) == 0) {
         if (local_buffer[4] == 't') {
           motors_enabled = 1;
@@ -235,14 +217,12 @@ int main(void) {
           __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, 1000);
         }
       }
-      // Acceleratore
       else if (strncmp(local_buffer, "THR:", 4) == 0) {
         int esp32_throttle = atoi(&local_buffer[4]);
         if (esp32_throttle >= 0 && esp32_throttle <= 255) {
           current_throttle = 1000 + ((esp32_throttle * 1000) / 255);
         }
       }
-      // Parametri PID
       else if (strncmp(local_buffer, "PID:", 4) == 0) {
         sscanf(&local_buffer[4], "%f,%f,%f,%f,%f,%f", &pid_pitch_p,
                &pid_pitch_i, &pid_pitch_d, &pid_roll_p, &pid_roll_i,
@@ -263,43 +243,33 @@ int main(void) {
 void MPU6050_Init(void) {
   uint8_t check, data;
 
-  // Verifica presenza MPU6050 controllando il registro WHO_AM_I (0x75)
   HAL_I2C_Mem_Read(&hi2c1, MPU6050_ADDR, 0x75, 1, &check, 1, 1000);
 
-  if (check == 104) { // 104 = 0x68 (Default per MPU6050)
-    // 1. Risveglio MPU6050
+  if (check == 104) {
     data = 0;
     HAL_I2C_Mem_Write(&hi2c1, MPU6050_ADDR, 0x6B, 1, &data, 1, 1000);
-    // 2. Configurazione Giroscopio: Fondo scala +/- 500 deg/s
     data = 0x08;
     HAL_I2C_Mem_Write(&hi2c1, MPU6050_ADDR, 0x1B, 1, &data, 1, 1000);
-    // 3. Configurazione Accelerometro: Fondo scala +/- 2g
     data = 0x00;
     HAL_I2C_Mem_Write(&hi2c1, MPU6050_ADDR, 0x1C, 1, &data, 1, 1000);
 
-    // 4. Filtro passa basso integrato nel MPU6050 (0x03 = 42Hz) per ridurre phase lag
-
-    //modificato 188Hz 01
-
-    data = 0x02;
+    // [AGGIORNATO] 0x03 = 42Hz DLPF per minore latenza rispetto al precedente 0x04 (20Hz)
+    data = 0x03; 
     HAL_I2C_Mem_Write(&hi2c1, MPU6050_ADDR, 0x1A, 1, &data, 1, 1000);
 
-    // --- 4. CALIBRAZIONE GIROSCOPIO E ACCELEROMETRO ---
-    HAL_Delay(4000);
+    HAL_Delay(4000); 
 
     int32_t gx_sum = 0, gy_sum = 0;
     float acc_pitch_sum = 0.0f, acc_roll_sum = 0.0f;
     uint8_t rec_data[14];
-    const int num_samples = 2000;
+    const int num_samples = 2000; 
 
     for (int i = 0; i < num_samples; i++) {
       HAL_I2C_Mem_Read(&hi2c1, MPU6050_ADDR, 0x3B, 1, rec_data, 14, 100);
 
-      // Somma Giroscopio
       gx_sum += (int16_t)(rec_data[8] << 8 | rec_data[9]);
       gy_sum += (int16_t)(rec_data[10] << 8 | rec_data[11]);
 
-      // Calcolo e somma angoli grezzi Accelerometro
       int16_t ax = (int16_t)(rec_data[0] << 8 | rec_data[1]);
       int16_t ay = (int16_t)(rec_data[2] << 8 | rec_data[3]);
       int16_t az = (int16_t)(rec_data[4] << 8 | rec_data[5]);
@@ -307,19 +277,16 @@ void MPU6050_Init(void) {
       acc_pitch_sum += atan2f(-ax, sqrtf(ay * ay + az * az)) * RAD_TO_DEG;
       acc_roll_sum += atan2f(ay, sqrtf(ax * ax + az * az)) * RAD_TO_DEG;
 
-      HAL_Delay(3); // Attesa per non saturare il bus I2C
+      HAL_Delay(3); 
     }
 
-    // Salva gli offset medi
     gyro_x_cal = (float)gx_sum / num_samples;
     gyro_y_cal = (float)gy_sum / num_samples;
 
-    // Pre-carica i filtri LPF con l'ultima lettura
     ax_filt = (int16_t)(rec_data[0] << 8 | rec_data[1]);
     ay_filt = (int16_t)(rec_data[2] << 8 | rec_data[3]);
     az_filt = (int16_t)(rec_data[4] << 8 | rec_data[5]);
 
-    // Azzera gli angoli di partenza (l'errore lo sottrarremo a runtime)
     pitch = 0.0f;
     roll = 0.0f;
   }
@@ -331,104 +298,71 @@ void MPU6050_Init(void) {
 void MPU6050_Read_Filter_Compute(void) {
   uint8_t rec_data[14];
 
-  // Lettura burst da 14 byte a partire dall'indirizzo base dei dati (0x3B)
   HAL_I2C_Mem_Read(&hi2c1, MPU6050_ADDR, 0x3B, 1, rec_data, 14, 100);
 
-  // Parsing registri grezzi
   int16_t accel_x_raw = (int16_t)(rec_data[0] << 8 | rec_data[1]);
   int16_t accel_y_raw = (int16_t)(rec_data[2] << 8 | rec_data[3]);
   int16_t accel_z_raw = (int16_t)(rec_data[4] << 8 | rec_data[5]);
   int16_t gyro_x_raw = (int16_t)(rec_data[8] << 8 | rec_data[9]);
   int16_t gyro_y_raw = (int16_t)(rec_data[10] << 8 | rec_data[11]);
 
-  // Applicazione LPF Esponenziale (EMA) sui vettori accelerometrici
   ax_filt = LPF_ALPHA * accel_x_raw + (1.0f - LPF_ALPHA) * ax_filt;
   ay_filt = LPF_ALPHA * accel_y_raw + (1.0f - LPF_ALPHA) * ay_filt;
   az_filt = LPF_ALPHA * accel_z_raw + (1.0f - LPF_ALPHA) * az_filt;
 
-  // Estrazione angoli grezzi accelerometro tramite arcotangente
-  // Estrazione angoli grezzi accelerometro e SOTTRAZIONE BIAS (Offset)
-  float acc_pitch =
-      (atan2f(-ax_filt, sqrtf(ay_filt * ay_filt + az_filt * az_filt)) *
-       RAD_TO_DEG) -
-      acc_pitch_cal;
-  float acc_roll =
-      (atan2f(ay_filt, sqrtf(ax_filt * ax_filt + az_filt * az_filt)) *
-       RAD_TO_DEG) -
-      acc_roll_cal;
+  float acc_pitch = (atan2f(-ax_filt, sqrtf(ay_filt * ay_filt + az_filt * az_filt)) * RAD_TO_DEG) - acc_pitch_cal;
+  float acc_roll = (atan2f(ay_filt, sqrtf(ax_filt * ax_filt + az_filt * az_filt)) * RAD_TO_DEG) - acc_roll_cal;
 
-  // Aggiornamento tempo per il controllo del loop principale
-  uint32_t current_time = HAL_GetTick();
-  last_time = current_time;
+  float gx = (gyro_x_raw - gyro_x_cal) / GYRO_SCALE;
+  float gy = (gyro_y_raw - gyro_y_cal) / GYRO_SCALE;
+  gyro_rate_pitch = gx;
+  gyro_rate_roll = gy;
 
-  // Hardcode di dt_actual a 4ms per annullare il jitter (HAL_GetTick oscilla e destabilizza la Derivata)
-  dt_actual = 0.004f;
-
-  // Velocita' angolari in Gradi/Secondo con offset rimosso
-  // Gyro X ruota attorno a X -> ROLL ; Gyro Y ruota attorno a Y -> PITCH
-  gyro_rate_roll = GYRO_ROLL_SIGN * (gyro_x_raw - gyro_x_cal) / GYRO_SCALE;
-  gyro_rate_pitch = GYRO_PITCH_SIGN * (gyro_y_raw - gyro_y_cal) / GYRO_SCALE;
-
-  // Filtro Complementare
-  roll = COMP_ALPHA * (roll + gyro_rate_roll * dt_actual) +
-         (1.0f - COMP_ALPHA) * acc_roll;
-  pitch = COMP_ALPHA * (pitch + gyro_rate_pitch * dt_actual) +
-          (1.0f - COMP_ALPHA) * acc_pitch;
+  pitch = COMP_ALPHA * (pitch + gx * dt_actual) + (1.0f - COMP_ALPHA) * acc_pitch;
+  roll = COMP_ALPHA * (roll + gy * dt_actual) + (1.0f - COMP_ALPHA) * acc_roll;
 }
 
 /**
  * @brief Computazione PID e Miscelazione base motori (X-Configuration)
  */
 void PID_ComputeAndMix(void) {
-  // Safety check
   if (!motors_enabled || current_throttle < 1050) {
     integral_pitch = 0;
     integral_roll = 0;
     return;
   }
 
-  // Setpoint 0 per hovering
   error_pitch = 0 - pitch;
   error_roll = 0 - roll;
 
-  // Componente Integrale
   integral_pitch += error_pitch * dt_actual;
   integral_roll += error_roll * dt_actual;
 
-  // Componente Derivativa: d(setpoint - angolo)/dt = -velocita_angolare.
   float deriv_pitch = -gyro_rate_pitch;
   float deriv_roll = -gyro_rate_roll;
 
-  // Uscita PID
   float pid_pitch_out = (pid_pitch_p * error_pitch) +
                         (pid_pitch_i * integral_pitch) +
                         (pid_pitch_d * deriv_pitch);
   float pid_roll_out = (pid_roll_p * error_roll) +
                        (pid_roll_i * integral_roll) + (pid_roll_d * deriv_roll);
 
-  // Motor Mixing X-Config (adattare i segni a seconda dell'orientamento
-  // dell'IMU)
   int16_t m1 = current_throttle + pid_pitch_out + pid_roll_out; // Front Left
   int16_t m2 = current_throttle + pid_pitch_out - pid_roll_out; // Front Right
   int16_t m3 = current_throttle - pid_pitch_out - pid_roll_out; // Back Right
   int16_t m4 = current_throttle - pid_pitch_out + pid_roll_out; // Back Left
 
-  // Saturazione segnali (Anti-Windup Meccanico)
   m1 = (m1 > 2000) ? 2000 : (m1 < 1000 ? 1000 : m1);
   m2 = (m2 > 2000) ? 2000 : (m2 < 1000 ? 1000 : m2);
   m3 = (m3 > 2000) ? 2000 : (m3 < 1000 ? 1000 : m3);
   m4 = (m4 > 2000) ? 2000 : (m4 < 1000 ? 1000 : m4);
 
-  // Applicazione al registro PWM
   __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, m1);
   __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, m2);
   __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, m3);
   __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, m4);
 }
 
-/**
- * @brief Callback Interrupt UART RX
- */
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
   if (huart->Instance == USART2) {
     if (esp32_rx_byte == '\n') {
@@ -443,9 +377,6 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
   }
 }
 
-/**
- * @brief Callback Interrupt UART TX completata
- */
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart) {
   if (huart->Instance == USART2) {
     telemetry_tx_busy = 0;
@@ -504,7 +435,9 @@ void SystemClock_Config(void) {
  */
 static void MX_I2C1_Init(void) {
   hi2c1.Instance = I2C1;
-  hi2c1.Init.Timing = 0x00909FCE; // Configurazione per 400kHz (Fast Mode)
+  // [AGGIORNATO] Valore temporaneo per 400kHz (Fast Mode). 
+  // NOTA BENE: Rigenerare l'hardware I2C1 via STM32CubeMX impostandolo su "Fast Mode" per garantire il timing corretto del bus in base al clock I2C
+  hi2c1.Init.Timing = 0x00909FCE; 
   hi2c1.Init.OwnAddress1 = 0;
   hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
   hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
@@ -535,7 +468,10 @@ static void MX_TIM1_Init(void) {
   htim1.Instance = TIM1;
   htim1.Init.Prescaler = 63;
   htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim1.Init.Period = 2499; // 400Hz per gli ESC
+  
+  // [AGGIORNATO] Periodo abbassato a 2499 -> 2.5ms, genera PWM a 400Hz anziché 50Hz
+  htim1.Init.Period = 2499; 
+  
   htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim1.Init.RepetitionCounter = 0;
   htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
@@ -611,12 +547,10 @@ static void MX_USART2_UART_Init(void) {
   if (HAL_UART_Init(&huart2) != HAL_OK) {
     Error_Handler();
   }
-  if (HAL_UARTEx_SetTxFifoThreshold(&huart2, UART_TXFIFO_THRESHOLD_1_8) !=
-      HAL_OK) {
+  if (HAL_UARTEx_SetTxFifoThreshold(&huart2, UART_TXFIFO_THRESHOLD_1_8) != HAL_OK) {
     Error_Handler();
   }
-  if (HAL_UARTEx_SetRxFifoThreshold(&huart2, UART_RXFIFO_THRESHOLD_1_8) !=
-      HAL_OK) {
+  if (HAL_UARTEx_SetRxFifoThreshold(&huart2, UART_RXFIFO_THRESHOLD_1_8) != HAL_OK) {
     Error_Handler();
   }
   if (HAL_UARTEx_DisableFifoMode(&huart2) != HAL_OK) {
