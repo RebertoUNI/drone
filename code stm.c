@@ -69,7 +69,7 @@ uint8_t esp32_rx_byte;
 char rx_buffer[64];
 uint8_t rx_index = 0;
 volatile uint8_t packet_ready = 0;
-char telemetry_tx_buffer[192];
+char telemetry_tx_buffer[256];
 volatile uint8_t telemetry_tx_busy = 0;
 
 // Stato di sistema
@@ -189,7 +189,8 @@ int main(void) {
 #endif
           int len = snprintf(telemetry_tx_buffer,
                              sizeof(telemetry_tx_buffer),
-                             "ANG:%.2f,%.2f,gyro_x_cal:%f,gyro_y_cal:%f,"
+                             "ANG:%.2f,%.2f,setpoint_pitch:0.00,setpoint_roll:0.00,"
+                             "gyro_x_cal:%f,gyro_y_cal:%f,"
                              "pid_pitch_p:%.2f,pid_pitch_i:%.2f,pid_pitch_d:%.2f,"
                              "pid_roll_p:%.2f,pid_roll_i:%.2f,pid_roll_d:%.2f\n",
                              pitch, roll, tlm_g1, tlm_g2, pid_pitch_p,

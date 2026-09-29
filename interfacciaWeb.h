@@ -3,200 +3,971 @@
 
 const char index_html[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
-<html>
-
+<html lang="it">
 <head>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Drone Telemetry Control</title>
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      text-align: center;
-      background: #222;
-      color: #fff;
-      padding: 10px;
-    }
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#0a0e14">
+    <title>UAV Ground Control Station</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --bg-main: #0a0e14;
+            --bg-gradient: radial-gradient(ellipse at top, #111827 0%, #0a0e14 70%);
+            --card-bg: rgba(21, 27, 38, 0.8);
+            --card-border: rgba(38, 51, 69, 0.6);
+            --accent-blue: #38bdf8;
+            --accent-amber: #fbbf24;
+            --accent-green: #22c55e;
+            --accent-red: #ef4444;
+            --accent-purple: #a78bfa;
+            --text-main: #f1f5f9;
+            --text-dim: #94a3b8;
+            --text-muted: #64748b;
+            --radius-sm: 8px;
+            --radius-md: 14px;
+            --shadow-card: 0 4px 24px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.02) inset;
+        }
 
-    .card {
-      background: #333;
-      padding: 20px;
-      margin: 10px auto;
-      max-width: 380px;
-      border-radius: 10px;
-    }
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            -webkit-tap-highlight-color: transparent;
+        }
 
-    .btn {
-      padding: 15px 25px;
-      font-size: 16px;
-      margin: 5px;
-      border: none;
-      border-radius: 5px;
-      cursor: pointer;
-      color: white;
-      font-weight: bold;
-    }
+        html, body {
+            overscroll-behavior: none;
+            -webkit-font-smoothing: antialiased;
+        }
 
-    .btn-start {
-      background: #2ecc71;
-    }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+            background: var(--bg-main);
+            background-image: var(--bg-gradient);
+            background-attachment: fixed;
+            color: var(--text-main);
+            min-height: 100vh;
+            padding: 12px;
+            padding-bottom: env(safe-area-inset-bottom, 20px);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
 
-    .btn-stop {
-      background: #e74c3c;
-      width: 90%;
-    }
+        /* ---------- HEADER ---------- */
+        header {
+            width: 100%;
+            max-width: 1280px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 4px 14px;
+            border-bottom: 1px solid var(--card-border);
+            margin-bottom: 16px;
+            gap: 10px;
+        }
 
-    .btn-pid {
-      background: #3498db;
-      width: 90%;
-      margin-top: 15px;
-    }
+        header h2 {
+            font-size: clamp(1rem, 4vw, 1.5rem);
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            background: linear-gradient(90deg, #fff 0%, var(--accent-blue) 120%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            white-space: nowrap;
+        }
 
-    input[type=range] {
-      width: 80%;
-      height: 30px;
-    }
+        .status-badge {
+            font-size: clamp(0.65rem, 2.5vw, 0.75rem);
+            padding: 6px 12px;
+            border-radius: 999px;
+            background: rgba(30, 41, 59, 0.8);
+            border: 1px solid var(--card-border);
+            color: var(--text-dim);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 600;
+            backdrop-filter: blur(8px);
+            white-space: nowrap;
+        }
 
-    input[type=number] {
-      width: 55px;
-      padding: 5px;
-      text-align: center;
-      margin: 4px 0;
-      border: 1px solid #555;
-      border-radius: 4px;
-    }
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--accent-red);
+            box-shadow: 0 0 10px var(--accent-red);
+            transition: all 0.3s ease;
+            flex-shrink: 0;
+        }
 
-    .telemetry {
-      display: flex;
-      justify-content: space-around;
-      font-size: 1.2em;
-      background: #444;
-      padding: 10px;
-      border-radius: 5px;
-    }
+        /* ---------- DASHBOARD GRID ---------- */
+        .dashboard {
+            width: 100%;
+            max-width: 1280px;
+            display: grid;
+            grid-template-columns: repeat(12, 1fr);
+            gap: 14px;
+        }
 
-    .pid-container {
-      display: flex;
-      justify-content: space-around;
-      gap: 10px;
-    }
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: var(--radius-md);
+            padding: 16px;
+            box-shadow: var(--shadow-card);
+            display: flex;
+            flex-direction: column;
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            position: relative;
+            overflow: hidden;
+            transition: border-color 0.3s ease;
+        }
 
-    .pid-column {
-      flex: 1;
-      background: #2a2a2a;
-      padding: 10px;
-      border-radius: 8px;
-    }
+        .card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.08), transparent);
+        }
 
-    .pid-column h4 {
-      margin: 0 0 10px 0;
-    }
+        .card-title {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--text-dim);
+            margin-bottom: 14px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
 
-    .pid-row {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      font-weight: bold;
-    }
-  </style>
+        .card-title::before {
+            content: '';
+            width: 3px;
+            height: 12px;
+            border-radius: 2px;
+            background: var(--accent-blue);
+            box-shadow: 0 0 8px var(--accent-blue);
+        }
+
+        .panel-horizon  { grid-column: span 3; }
+        .panel-chart    { grid-column: span 9; }
+        .panel-power    { grid-column: span 4; }
+        .panel-dynamics { grid-column: span 4; }
+        .panel-throttle { grid-column: span 4; }
+        .panel-pid      { grid-column: span 12; }
+
+        @media (max-width: 1000px) {
+            .panel-horizon  { grid-column: span 4; }
+            .panel-chart    { grid-column: span 8; }
+            .panel-power,
+            .panel-dynamics,
+            .panel-throttle { grid-column: span 4; }
+        }
+
+        @media (max-width: 720px) {
+            .panel-horizon,
+            .panel-chart,
+            .panel-power,
+            .panel-dynamics,
+            .panel-throttle { grid-column: span 12; }
+        }
+
+        /* ---------- ORIZZONTE ARTIFICIALE ---------- */
+        .horizon-container {
+            position: relative;
+            width: min(220px, 70vw);
+            aspect-ratio: 1;
+            border-radius: 50%;
+            overflow: hidden;
+            border: 3px solid #334155;
+            box-shadow: 
+                inset 0 0 30px rgba(0,0,0,0.9),
+                0 0 0 1px rgba(56, 189, 248, 0.1),
+                0 8px 24px rgba(0,0,0,0.5);
+            margin: 0 auto;
+            transition: border-color 0.3s ease;
+        }
+
+        .horizon-container:hover {
+            border-color: #475569;
+        }
+
+        canvas#horizon {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        .crosshair {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            width: 45%;
+            height: 2px;
+            background: var(--accent-amber);
+            z-index: 10;
+            box-shadow: 0 0 8px rgba(251, 191, 36, 0.6);
+            border-radius: 2px;
+        }
+        .crosshair::before {
+            content: '';
+            position: absolute;
+            top: -8px; left: 50%;
+            transform: translateX(-50%);
+            width: 2px; height: 18px;
+            background: var(--accent-amber);
+            box-shadow: 0 0 8px rgba(251, 191, 36, 0.6);
+            border-radius: 2px;
+        }
+
+        /* ---------- CHART ---------- */
+        .chart-container {
+            position: relative;
+            height: clamp(180px, 40vw, 240px);
+            width: 100%;
+        }
+
+        /* ---------- METRICHE ---------- */
+        .metric-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            flex-grow: 1;
+        }
+
+        .metric-box {
+            background: rgba(15, 20, 28, 0.7);
+            border: 1px solid rgba(30, 41, 59, 0.8);
+            border-radius: var(--radius-sm);
+            padding: 12px 8px;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            transition: border-color 0.3s ease;
+        }
+
+        .metric-box:hover {
+            border-color: rgba(56, 189, 248, 0.3);
+        }
+
+        .metric-label {
+            font-size: 0.65rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            font-weight: 600;
+        }
+
+        .metric-val {
+            font-family: "JetBrains Mono", ui-monospace, Consolas, monospace;
+            font-size: clamp(1.1rem, 4vw, 1.5rem);
+            font-weight: 700;
+            margin-top: 4px;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .progress-bar-bg {
+            background: rgba(15, 20, 28, 0.9);
+            height: 8px;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 12px;
+            border: 1px solid rgba(30, 41, 59, 0.6);
+        }
+
+        .progress-bar-fill {
+            height: 100%;
+            width: 0%;
+            background: var(--accent-green);
+            transition: width 0.4s ease, background 0.4s ease;
+            border-radius: 4px;
+            box-shadow: 0 0 12px currentColor;
+        }
+
+        /* ---------- BOTTONI ---------- */
+        .btn {
+            border: none;
+            border-radius: var(--radius-sm);
+            padding: 12px 16px;
+            font-weight: 700;
+            font-size: 0.85rem;
+            cursor: pointer;
+            transition: opacity 0.2s, transform 0.1s, box-shadow 0.2s;
+            font-family: inherit;
+            letter-spacing: 0.02em;
+            min-height: 44px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .btn:active { transform: scale(0.97); }
+
+        .btn-danger {
+            background: linear-gradient(135deg, #ef4444, #dc2626);
+            color: white;
+            width: 100%;
+            box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
+        }
+        .btn-danger:hover { box-shadow: 0 6px 20px rgba(239, 68, 68, 0.5); }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent-blue), #0ea5e9);
+            color: #001;
+            box-shadow: 0 4px 12px rgba(56, 189, 248, 0.3);
+        }
+        .btn-primary:hover { box-shadow: 0 6px 20px rgba(56, 189, 248, 0.5); }
+
+        .btn-subtle {
+            background: rgba(51, 65, 85, 0.8);
+            color: var(--text-main);
+            font-size: 0.75rem;
+            padding: 8px 14px;
+            min-height: 36px;
+            border: 1px solid rgba(71, 85, 105, 0.5);
+        }
+        .btn-subtle:hover { background: rgba(71, 85, 105, 0.9); }
+
+        /* ---------- THROTTLE ---------- */
+        .throttle-lock-zone {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 14px;
+            background: rgba(15, 20, 28, 0.7);
+            padding: 10px 12px;
+            border-radius: var(--radius-sm);
+            border: 1px solid rgba(30, 41, 59, 0.6);
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .switch-label {
+            font-size: 0.85rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            color: var(--text-main);
+        }
+
+        input[type=checkbox] {
+            width: 20px;
+            height: 20px;
+            accent-color: var(--accent-green);
+            cursor: pointer;
+        }
+
+        input[type=range] {
+            width: 100%;
+            height: 36px;
+            background: transparent;
+            cursor: pointer;
+            -webkit-appearance: none;
+            appearance: none;
+            touch-action: pan-y;
+        }
+
+        input[type=range]::-webkit-slider-runnable-track {
+            height: 8px;
+            background: rgba(15, 20, 28, 0.9);
+            border-radius: 4px;
+            border: 1px solid rgba(30, 41, 59, 0.8);
+        }
+
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--accent-blue), #0ea5e9);
+            margin-top: -11px;
+            box-shadow: 0 0 12px rgba(56, 189, 248, 0.6), 0 2px 6px rgba(0,0,0,0.5);
+            border: 2px solid #fff;
+        }
+
+        input[type=range]::-moz-range-track {
+            height: 8px;
+            background: rgba(15, 20, 28, 0.9);
+            border-radius: 4px;
+            border: 1px solid rgba(30, 41, 59, 0.8);
+        }
+
+        input[type=range]::-moz-range-thumb {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--accent-blue), #0ea5e9);
+            box-shadow: 0 0 12px rgba(56, 189, 248, 0.6);
+            border: 2px solid #fff;
+            cursor: pointer;
+        }
+
+        input[type=range]:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+        input[type=range]:disabled::-webkit-slider-thumb {
+            background: #475569;
+            box-shadow: none;
+        }
+
+        .thr-display {
+            text-align: center;
+            margin: 10px 0;
+            font-size: 0.85rem;
+            color: var(--text-dim);
+            font-weight: 600;
+            letter-spacing: 0.05em;
+        }
+
+        .thr-display strong {
+            font-family: "JetBrains Mono", ui-monospace, monospace;
+            font-size: 1.4rem;
+            color: #fff;
+            margin-left: 4px;
+        }
+
+        /* ---------- TABELLA PID ---------- */
+        .pid-table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0 8px;
+        }
+
+        .pid-table thead th {
+            font-size: 0.65rem;
+            color: var(--text-muted);
+            padding: 4px 8px;
+            text-align: left;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            font-weight: 700;
+        }
+
+        .pid-table tbody tr {
+            background: rgba(15, 20, 28, 0.6);
+        }
+
+        .pid-table td {
+            padding: 10px 8px;
+            vertical-align: middle;
+        }
+
+        .pid-table tbody tr td:first-child {
+            border-top-left-radius: var(--radius-sm);
+            border-bottom-left-radius: var(--radius-sm);
+            padding-left: 14px;
+            font-weight: 700;
+            font-size: 0.85rem;
+        }
+
+        .pid-table tbody tr td:last-child {
+            border-top-right-radius: var(--radius-sm);
+            border-bottom-right-radius: var(--radius-sm);
+            padding-right: 14px;
+        }
+
+        .pid-input-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .pid-table input[type=number] {
+            width: 80px;
+            background: rgba(11, 15, 23, 0.9);
+            border: 1px solid rgba(51, 65, 85, 0.8);
+            color: #fff;
+            padding: 10px;
+            border-radius: 6px;
+            font-family: ui-monospace, monospace;
+            text-align: right;
+            font-size: 0.85rem;
+            transition: border-color 0.2s, box-shadow 0.2s;
+            -moz-appearance: textfield;
+            min-height: 40px;
+        }
+
+        .pid-table input[type=number]::-webkit-outer-spin-button,
+        .pid-table input[type=number]::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+
+        .pid-table input[type=number]:focus {
+            border-color: var(--accent-blue);
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.15);
+        }
+
+        .live-pid {
+            font-size: 0.65rem;
+            color: var(--text-muted);
+            font-family: ui-monospace, monospace;
+            white-space: nowrap;
+        }
+
+        /* ---------- OTTIMIZZAZIONE MOBILE TABELLA PID ---------- */
+        @media (max-width: 768px) {
+            .panel-pid {
+                padding: 12px 8px;
+            }
+
+            .pid-table {
+                border-spacing: 0 6px;
+            }
+
+            .pid-table thead th {
+                font-size: 0;
+                text-align: center;
+                padding: 2px 2px 8px;
+                letter-spacing: 0;
+            }
+            .pid-table thead th:first-child {
+                font-size: 0.7rem;
+                text-align: left;
+                padding-left: 10px;
+                width: 50px;
+            }
+            .pid-table thead th:nth-child(2)::after { content: "P"; font-size: 0.75rem; font-weight: 800; color: var(--accent-green); }
+            .pid-table thead th:nth-child(3)::after { content: "I"; font-size: 0.75rem; font-weight: 800; color: var(--accent-amber); }
+            .pid-table thead th:nth-child(4)::after { content: "D"; font-size: 0.75rem; font-weight: 800; color: var(--accent-purple); }
+
+            .pid-table td {
+                padding: 8px 2px;
+            }
+            .pid-table tbody tr td:first-child {
+                padding-left: 10px;
+                padding-right: 4px;
+                font-size: 0.75rem;
+                width: 50px;
+            }
+            .pid-table tbody tr td:last-child {
+                padding-right: 8px;
+            }
+
+            .pid-input-group {
+                flex-direction: column;
+                justify-content: center;
+                align-items: center;
+                gap: 4px;
+            }
+
+            .pid-table input[type=number] {
+                width: 100%;
+                max-width: 72px;
+                min-width: 56px;
+                text-align: center;
+                padding: 8px 2px;
+                font-size: 0.8rem;
+                min-height: 36px;
+            }
+
+            .live-pid {
+                width: auto;
+                text-align: center;
+                font-size: 0.58rem;
+                letter-spacing: -0.02em;
+            }
+        }
+
+        @media (max-width: 360px) {
+            .pid-table input[type=number] {
+                font-size: 0.72rem;
+                padding: 7px 1px;
+                min-width: 48px;
+            }
+            .live-pid {
+                font-size: 0.52rem;
+            }
+            .pid-table thead th:first-child,
+            .pid-table tbody tr td:first-child {
+                width: 42px;
+                padding-left: 6px;
+            }
+        }
+
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(71, 85, 105, 0.6);
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(100, 116, 139, 0.8); }
+
+        @media (prefers-reduced-motion: reduce) {
+            * { transition: none !important; animation: none !important; }
+        }
+    </style>
 </head>
 
 <body>
-  <h2>Quadcopter Control Interface</h2>
+    <header>
+        <h2>✈ Ground Control Station</h2>
+        <div class="status-badge">
+            <div id="statusDot" class="status-dot"></div>
+            <span id="statusText">Disconnesso</span>
+        </div>
+    </header>
 
-  <div class="card">
-    <h3>Flight Dynamics</h3>
-    <div class="telemetry">
-      <div>Pitch: <br><strong id="pitchVal" style="color: #f39c12;">0.00</strong>&deg;</div>
-      <div>Roll: <br><strong id="rollVal" style="color: #3498db;">0.00</strong>&deg;</div>
-    </div>
-    <div class="telemetry" style="margin-top: 10px; font-size: 0.9em; background: #2a2a2a;">
-      <div>Gyro X offset: <br><strong id="gyroXCal" style="color: #1abc9c;">0.00</strong></div>
-      <div>Gyro Y offset: <br><strong id="gyroYCal" style="color: #9b59b6;">0.00</strong></div>
-    </div>
-  </div>
+    <main class="dashboard">
+        <!-- Orizzonte Artificiale -->
+        <section class="card panel-horizon">
+            <div class="card-title">Attitude Indicator</div>
+            <div class="horizon-container">
+                <canvas id="horizon" width="400" height="400"></canvas>
+                <div class="crosshair"></div>
+            </div>
+        </section>
 
-  <div class="card">
-    <h3>Motori</h3>
-    <button class="btn btn-start" onclick="sendCmd('t')">START TEST</button>
-    <button class="btn btn-stop" onclick="sendCmd('s')">EMERGENCY STOP</button>
-  </div>
+        <!-- Grafico SetPoint vs Measured -->
+        <section class="card panel-chart">
+            <div class="card-title">Real-Time Response (SetPoint vs Act)</div>
+            <div class="chart-container">
+                <canvas id="telemetryChart"></canvas>
+            </div>
+        </section>
 
-  <div class="card">
-    <h3>Throttle: <span id="thVal">0</span></h3>
-    <input type="range" min="0" max="255" value="0" oninput="sendThr(this.value)">
-  </div>
+        <!-- Batteria (ora a sinistra) -->
+        <section class="card panel-power">
+            <div class="card-title">Power System</div>
+            <div class="metric-grid">
+                <div class="metric-box">
+                    <div class="metric-label">Tensione</div>
+                    <div class="metric-val" id="battVolt">0.00<span style="font-size: 0.9rem;">V</span></div>
+                </div>
+                <div class="metric-box">
+                    <div class="metric-label">Livello</div>
+                    <div class="metric-val" id="battPerc" style="color: var(--accent-green);">0<span style="font-size: 0.9rem;">%</span></div>
+                </div>
+            </div>
+            <div class="progress-bar-bg">
+                <div id="battBar" class="progress-bar-fill"></div>
+            </div>
+        </section>
 
-  <div class="card">
-    <h3>PID Tuning</h3>
-    <div class="pid-container">
-      <!-- Pitch PID -->
-      <div class="pid-column">
-        <h4 style="color: #f39c12;">Pitch</h4>
-        <div class="pid-row">P (<span id="currentPitchP">1.00</span>): <input type="number" id="p_pitch" step="0.01" value="1.00"></div>
-        <div class="pid-row">I (<span id="currentPitchI">0.00</span>): <input type="number" id="i_pitch" step="0.01" value="0.00"></div>
-        <div class="pid-row">D (<span id="currentPitchD">0.00</span>): <input type="number" id="d_pitch" step="0.01" value="0.00"></div>
-      </div>
+        <!-- Numeri Dinamici (ora a destra) -->
+        <section class="card panel-dynamics">
+            <div class="card-title">Flight Dynamics</div>
+            <div class="metric-grid">
+                <div class="metric-box">
+                    <div class="metric-label">Pitch</div>
+                    <div class="metric-val" id="pitchVal" style="color: var(--accent-amber);">0.00°</div>
+                </div>
+                <div class="metric-box">
+                    <div class="metric-label">Roll</div>
+                    <div class="metric-val" id="rollVal" style="color: var(--accent-blue);">0.00°</div>
+                </div>
+            </div>
+        </section>
 
-      <!-- Roll PID -->
-      <div class="pid-column">
-        <h4 style="color: #3498db;">Roll</h4>
-        <div class="pid-row">P (<span id="currentRollP">1.00</span>): <input type="number" id="p_roll" step="0.01" value="1.00"></div>
-        <div class="pid-row">I (<span id="currentRollI">0.00</span>): <input type="number" id="i_roll" step="0.01" value="0.00"></div>
-        <div class="pid-row">D (<span id="currentRollD">0.00</span>): <input type="number" id="d_roll" step="0.01" value="0.00"></div>
-      </div>
-    </div>
+        <!-- Motori & Sicurezza -->
+        <section class="card panel-throttle">
+            <div class="card-title">Propulsione</div>
+            <div class="throttle-lock-zone">
+                <label class="switch-label">
+                    <input type="checkbox" id="throttleUnlock" onchange="toggleThrottleLock(this.checked)">
+                    <span>Arm Motori</span>
+                </label>
+                <button class="btn btn-subtle" onclick="cutThrottle()">CUT (0)</button>
+            </div>
+            <div class="thr-display">
+                THR: <strong id="thVal">0</strong> / 255
+            </div>
+            <input type="range" id="throttleInput" min="0" max="255" value="0" disabled oninput="sendThr(this.value)">
+            <button class="btn btn-danger" style="margin-top: 14px;" onclick="emergencyStop()">⚠ EMERGENCY STOP</button>
+        </section>
 
-    <button class="btn btn-pid" onclick="sendPid()">Invia Costanti PID</button>
-  </div>
+        <!-- PID Control Matrix -->
+        <section class="card panel-pid">
+            <div class="card-title">Tuning PID</div>
+            <table class="pid-table">
+                <thead>
+                    <tr>
+                        <th>Asse</th>
+                        <th>Proporzionale (P)</th>
+                        <th>Integrativo (I)</th>
+                        <th>Derivativo (D)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td data-label="Asse" style="font-weight: 700; color: var(--accent-amber);">Pitch</td>
+                        <td data-label="P">
+                            <div class="pid-input-group">
+                                <input type="number" id="p_pitch" step="0.001" value="1.000" inputmode="decimal">
+                                <span class="live-pid">Act: <span id="curPitchP">1.000</span></span>
+                            </div>
+                        </td>
+                        <td data-label="I">
+                            <div class="pid-input-group">
+                                <input type="number" id="i_pitch" step="0.001" value="0.000" inputmode="decimal">
+                                <span class="live-pid">Act: <span id="curPitchI">0.000</span></span>
+                            </div>
+                        </td>
+                        <td data-label="D">
+                            <div class="pid-input-group">
+                                <input type="number" id="d_pitch" step="0.001" value="0.000" inputmode="decimal">
+                                <span class="live-pid">Act: <span id="curPitchD">0.000</span></span>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td data-label="Asse" style="font-weight: 700; color: var(--accent-blue);">Roll</td>
+                        <td data-label="P">
+                            <div class="pid-input-group">
+                                <input type="number" id="p_roll" step="0.001" value="1.000" inputmode="decimal">
+                                <span class="live-pid">Act: <span id="curRollP">1.000</span></span>
+                            </div>
+                        </td>
+                        <td data-label="I">
+                            <div class="pid-input-group">
+                                <input type="number" id="i_roll" step="0.001" value="0.000" inputmode="decimal">
+                                <span class="live-pid">Act: <span id="curRollI">0.000</span></span>
+                            </div>
+                        </td>
+                        <td data-label="D">
+                            <div class="pid-input-group">
+                                <input type="number" id="d_roll" step="0.001" value="0.000" inputmode="decimal">
+                                <span class="live-pid">Act: <span id="curRollD">0.000</span></span>
+                            </div>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+            <button class="btn btn-primary" style="width: 100%; margin-top: 16px;" onclick="sendPid()">Applica Nuovi Parametri PID</button>
+        </section>
+    </main>
 
-  <script>
-    function sendCmd(action) { fetch('/cmd?action=' + action); }
-    function sendThr(val) { document.getElementById('thVal').innerText = val; fetch('/throttle?val=' + val); }
-    function updateCurrentPid(id, value) {
-      if (value !== undefined) {
-        const numericValue = Number(value);
-        document.getElementById(id).innerText = Number.isFinite(numericValue) ? numericValue.toFixed(2) : value;
-      }
-    }
+    <script>
+        function toggleThrottleLock(unlocked) {
+            document.getElementById('throttleInput').disabled = !unlocked;
+            if (!unlocked) cutThrottle();
+        }
 
-    function sendPid() {
-      const pp = document.getElementById('p_pitch').value;
-      const ip = document.getElementById('i_pitch').value;
-      const dp = document.getElementById('d_pitch').value;
+        function cutThrottle() {
+            document.getElementById('throttleInput').value = 0;
+            sendThr(0);
+        }
 
-      const pr = document.getElementById('p_roll').value;
-      const ir = document.getElementById('i_roll').value;
-      const dr = document.getElementById('d_roll').value;
+        function emergencyStop() {
+            document.getElementById('throttleUnlock').checked = false;
+            toggleThrottleLock(false);
+            fetch('/cmd?action=s').catch(console.error);
+        }
 
-      fetch(`/pid?pitch_p=${pp}&pitch_i=${ip}&pitch_d=${dp}&roll_p=${pr}&roll_i=${ir}&roll_d=${dr}`);
-    }
+        function sendThr(val) {
+            document.getElementById('thVal').innerText = val;
+            fetch('/throttle?val=' + val).catch(console.error);
+        }
 
-    // Polling asincrono per l'aggiornamento degli angoli e calibrazione in background a 5Hz
-    setInterval(() => {
-      fetch('/telemetry')
-        .then(response => response.json())
-        .then(data => {
-          document.getElementById('pitchVal').innerText = data.pitch;
-          document.getElementById('rollVal').innerText = data.roll;
-          if (data.gyro_x_cal !== undefined) {
-            document.getElementById('gyroXCal').innerText = isNaN(Number(data.gyro_x_cal)) ? data.gyro_x_cal : Number(data.gyro_x_cal).toFixed(2);
-          }
-          if (data.gyro_y_cal !== undefined) {
-            document.getElementById('gyroYCal').innerText = isNaN(Number(data.gyro_y_cal)) ? data.gyro_y_cal : Number(data.gyro_y_cal).toFixed(2);
-          }
-          updateCurrentPid('currentPitchP', data.pid_pitch_p);
-          updateCurrentPid('currentPitchI', data.pid_pitch_i);
-          updateCurrentPid('currentPitchD', data.pid_pitch_d);
-          updateCurrentPid('currentRollP', data.pid_roll_p);
-          updateCurrentPid('currentRollI', data.pid_roll_i);
-          updateCurrentPid('currentRollD', data.pid_roll_d);
-        })
-        .catch(err => console.error(err));
-    }, 200);
-  </script>
+        function sendPid() {
+            const getVal = (id) => parseFloat(document.getElementById(id).value).toFixed(3);
+            const params = `pitch_p=${getVal('p_pitch')}&pitch_i=${getVal('i_pitch')}&pitch_d=${getVal('d_pitch')}&roll_p=${getVal('p_roll')}&roll_i=${getVal('i_roll')}&roll_d=${getVal('d_roll')}`;
+            fetch(`/pid?${params}`).catch(console.error);
+        }
+
+        function updateField(id, val, decimals = 3) {
+            if (val !== undefined) {
+                const n = Number(val);
+                document.getElementById(id).innerText = Number.isFinite(n) ? n.toFixed(decimals) : val;
+            }
+        }
+
+        function updateBattery(volts, percent) {
+            if (volts !== undefined) {
+                document.getElementById('battVolt').innerHTML = `${Number(volts).toFixed(2)}<span style="font-size: 0.9rem;">V</span>`;
+            }
+            if (percent !== undefined) {
+                const p = Math.max(0, Math.min(100, Math.round(percent)));
+                const bar = document.getElementById('battBar');
+                document.getElementById('battPerc').innerHTML = `${p}<span style="font-size: 0.9rem;">%</span>`;
+                bar.style.width = p + '%';
+                if (p > 50) bar.style.background = 'var(--accent-green)';
+                else if (p > 20) bar.style.background = 'var(--accent-amber)';
+                else bar.style.background = 'var(--accent-red)';
+            }
+        }
+
+        const canvas = document.getElementById('horizon');
+        const ctx = canvas.getContext('2d');
+        
+        function drawHorizon(pitch, roll) {
+            const w = canvas.width;
+            const h = canvas.height;
+            
+            ctx.clearRect(0, 0, w, h);
+            ctx.save();
+            
+            ctx.translate(w/2, h/2);
+            ctx.rotate(roll * Math.PI / 180);
+            const pitchOffset = pitch * (h / 90);
+            ctx.translate(0, pitchOffset);
+
+            const skyGrad = ctx.createLinearGradient(0, -h, 0, 0);
+            skyGrad.addColorStop(0, '#0c1e4a');
+            skyGrad.addColorStop(1, '#1e3a8a');
+            ctx.fillStyle = skyGrad;
+            ctx.fillRect(-w*2, -h*2, w*4, h*2);
+
+            const groundGrad = ctx.createLinearGradient(0, 0, 0, h);
+            groundGrad.addColorStop(0, '#5c2a0a');
+            groundGrad.addColorStop(1, '#3a1a05');
+            ctx.fillStyle = groundGrad;
+            ctx.fillRect(-w*2, 0, w*4, h*2);
+
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(-w*2, 0);
+            ctx.lineTo(w*2, 0);
+            ctx.stroke();
+
+            ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+            ctx.fillStyle = 'rgba(255,255,255,0.9)';
+            ctx.font = 'bold 18px Arial';
+            ctx.textAlign = 'right';
+            ctx.textBaseline = 'middle';
+            
+            for (let i = -60; i <= 60; i += 15) {
+                if (i === 0) continue;
+                const y = -i * (h / 90);
+                const lineWidth = (i % 30 === 0) ? 60 : 30;
+                
+                ctx.beginPath();
+                ctx.moveTo(-lineWidth, y);
+                ctx.lineTo(lineWidth, y);
+                ctx.lineWidth = (i % 30 === 0) ? 3 : 2;
+                ctx.stroke();
+
+                if (i % 30 === 0) {
+                    ctx.fillText(Math.abs(i), -lineWidth - 8, y);
+                    ctx.textAlign = 'left';
+                    ctx.fillText(Math.abs(i), lineWidth + 8, y);
+                    ctx.textAlign = 'right';
+                }
+            }
+
+            ctx.restore();
+        }
+
+        const chartCtx = document.getElementById('telemetryChart').getContext('2d');
+        const maxDataPoints = 60;
+        
+        const telemetryChart = new Chart(chartCtx, {
+            type: 'line',
+            data: {
+                labels: Array(maxDataPoints).fill(''),
+                datasets: [
+                    { label: 'Pitch (Meas)', borderColor: '#fbbf24', data: Array(maxDataPoints).fill(0), borderWidth: 2, pointRadius: 0, tension: 0.2 },
+                    { label: 'Pitch (Set)', borderColor: 'rgba(251, 191, 36, 0.35)', borderDash: [5, 5], data: Array(maxDataPoints).fill(0), borderWidth: 1.5, pointRadius: 0 },
+                    { label: 'Roll (Meas)', borderColor: '#38bdf8', data: Array(maxDataPoints).fill(0), borderWidth: 2, pointRadius: 0, tension: 0.2 },
+                    { label: 'Roll (Set)', borderColor: 'rgba(56, 189, 248, 0.35)', borderDash: [5, 5], data: Array(maxDataPoints).fill(0), borderWidth: 1.5, pointRadius: 0 }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: {
+                        labels: {
+                            color: '#94a3b8',
+                            font: { size: 10 },
+                            boxWidth: 12,
+                            boxHeight: 2,
+                            padding: 10
+                        }
+                    }
+                },
+                scales: {
+                    x: { display: false },
+                    y: {
+                        grid: { color: 'rgba(30, 41, 59, 0.6)' },
+                        ticks: { color: '#64748b', font: { size: 10 } },
+                        suggestedMin: -30,
+                        suggestedMax: 30
+                    }
+                }
+            }
+        });
+
+        function resizeCanvas() {
+            const container = canvas.parentElement;
+            const size = container.clientWidth;
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = size * dpr;
+            canvas.height = size * dpr;
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            drawHorizon(parseFloat(document.getElementById('pitchVal').innerText) || 0,
+                        parseFloat(document.getElementById('rollVal').innerText) || 0);
+        }
+
+        window.addEventListener('resize', resizeCanvas);
+        setTimeout(resizeCanvas, 0);
+
+        setInterval(() => {
+            fetch('/telemetry')
+                .then(r => r.json())
+                .then(data => {
+                    const dot = document.getElementById('statusDot');
+                    dot.style.background = 'var(--accent-green)';
+                    dot.style.boxShadow = '0 0 10px var(--accent-green)';
+                    document.getElementById('statusText').innerText = 'Connesso';
+
+                    const p = parseFloat(data.pitch) || 0;
+                    const r = parseFloat(data.roll) || 0;
+
+                    updateField('pitchVal', p, 2);
+                    updateField('rollVal', r, 2);
+                    
+                    const set_p = parseFloat(data.setpoint_pitch) || 0;
+                    const set_r = parseFloat(data.setpoint_roll) || 0;
+
+                    drawHorizon(p, r);
+                    
+                    const dsets = telemetryChart.data.datasets;
+                    dsets[0].data.push(p); dsets[0].data.shift();
+                    dsets[1].data.push(set_p); dsets[1].data.shift();
+                    dsets[2].data.push(r); dsets[2].data.shift();
+                    dsets[3].data.push(set_r); dsets[3].data.shift();
+                    telemetryChart.update('none');
+
+                    updateBattery(data.battery_v, data.battery_pct);
+                    updateField('curPitchP', data.pid_pitch_p, 3);
+                    updateField('curPitchI', data.pid_pitch_i, 3);
+                    updateField('curPitchD', data.pid_pitch_d, 3);
+                    updateField('curRollP', data.pid_roll_p, 3);
+                    updateField('curRollI', data.pid_roll_i, 3);
+                    updateField('curRollD', data.pid_roll_d, 3);
+                })
+                .catch(() => {
+                    const dot = document.getElementById('statusDot');
+                    dot.style.background = 'var(--accent-red)';
+                    dot.style.boxShadow = '0 0 10px var(--accent-red)';
+                    document.getElementById('statusText').innerText = 'Nessun Segnale / Timeout';
+                });
+        }, 200);
+
+        drawHorizon(0, 0);
+    </script>
 </body>
-
 </html>
 )rawliteral";
 
