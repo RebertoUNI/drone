@@ -28,13 +28,14 @@
 
 // Costanti Matematiche e di Sistema
 #define RAD_TO_DEG 57.2957795131f
-#define LPF_ALPHA 0.5f   // Fattore filtro Passa-Basso (aumentato per ridurre phase lag)
+#define LPF_ALPHA                                                              \
+  0.5f // Fattore filtro Passa-Basso (aumentato per ridurre phase lag)
 #define COMP_ALPHA 0.98f // Fattore filtro Complementare
 #define GYRO_SCALE 65.5f // Scala giroscopio per +/- 500 deg/s
 
 // Mapping giroscopio -> angolo
-#define GYRO_ROLL_SIGN  1.0f  // gyro X -> roll
-#define GYRO_PITCH_SIGN 1.0f  // gyro Y -> pitch
+#define GYRO_ROLL_SIGN 1.0f  // gyro X -> roll
+#define GYRO_PITCH_SIGN 1.0f // gyro Y -> pitch
 
 // 1 = in telemetria, al posto di gyro_x_cal / gyro_y_cal, arrivano le
 //     velocita' angolari di roll e pitch (deg/s) per verificare i segni
@@ -69,7 +70,7 @@ uint8_t esp32_rx_byte;
 char rx_buffer[64];
 uint8_t rx_index = 0;
 volatile uint8_t packet_ready = 0;
-char telemetry_tx_buffer[256];
+char telemetry_tx_buffer[192];
 volatile uint8_t telemetry_tx_busy = 0;
 
 // Stato di sistema
@@ -187,20 +188,17 @@ int main(void) {
           float tlm_g1 = gyro_x_cal;
           float tlm_g2 = gyro_y_cal;
 #endif
-          int len = snprintf(telemetry_tx_buffer,
-                             sizeof(telemetry_tx_buffer),
-                             "ANG:%.2f,%.2f,setpoint_pitch:0.00,setpoint_roll:0.00,"
-                             "gyro_x_cal:%f,gyro_y_cal:%f,"
-                             "pid_pitch_p:%.2f,pid_pitch_i:%.2f,pid_pitch_d:%.2f,"
-                             "pid_roll_p:%.2f,pid_roll_i:%.2f,pid_roll_d:%.2f\n",
-                             pitch, roll, tlm_g1, tlm_g2, pid_pitch_p,
-                             pid_pitch_i, pid_pitch_d, pid_roll_p, pid_roll_i,
-                             pid_roll_d);
+          int len =
+              snprintf(telemetry_tx_buffer, sizeof(telemetry_tx_buffer),
+                       "ANG:%.2f,%.2f,gyro_x_cal:%f,gyro_y_cal:%f,"
+                       "pid_pitch_p:%.2f,pid_pitch_i:%.2f,pid_pitch_d:%.2f,"
+                       "pid_roll_p:%.2f,pid_roll_i:%.2f,pid_roll_d:%.2f\n",
+                       pitch, roll, tlm_g1, tlm_g2, pid_pitch_p, pid_pitch_i,
+                       pid_pitch_d, pid_roll_p, pid_roll_i, pid_roll_d);
 
           if (len > 0 && len < (int)sizeof(telemetry_tx_buffer)) {
             telemetry_tx_busy = 1;
-            if (HAL_UART_Transmit_IT(&huart2,
-                                     (uint8_t *)telemetry_tx_buffer,
+            if (HAL_UART_Transmit_IT(&huart2, (uint8_t *)telemetry_tx_buffer,
                                      (uint16_t)len) != HAL_OK) {
               telemetry_tx_busy = 0;
             }
@@ -278,9 +276,10 @@ void MPU6050_Init(void) {
     data = 0x00;
     HAL_I2C_Mem_Write(&hi2c1, MPU6050_ADDR, 0x1C, 1, &data, 1, 1000);
 
-    // 4. Filtro passa basso integrato nel MPU6050 (0x03 = 42Hz) per ridurre phase lag
+    // 4. Filtro passa basso integrato nel MPU6050 (0x03 = 42Hz) per ridurre
+    // phase lag
 
-    //modificato 188Hz 01
+    // modificato 188Hz 01
 
     data = 0x02;
     HAL_I2C_Mem_Write(&hi2c1, MPU6050_ADDR, 0x1A, 1, &data, 1, 1000);
@@ -362,7 +361,8 @@ void MPU6050_Read_Filter_Compute(void) {
   uint32_t current_time = HAL_GetTick();
   last_time = current_time;
 
-  // Hardcode di dt_actual a 4ms per annullare il jitter (HAL_GetTick oscilla e destabilizza la Derivata)
+  // Hardcode di dt_actual a 4ms per annullare il jitter (HAL_GetTick oscilla e
+  // destabilizza la Derivata)
   dt_actual = 0.004f;
 
   // Velocita' angolari in Gradi/Secondo con offset rimosso

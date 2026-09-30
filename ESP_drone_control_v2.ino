@@ -14,8 +14,6 @@ WebServer server(80);
 // Variabili globali per memorizzare telemetria
 String current_pitch = "0.00";
 String current_roll = "0.00";
-String current_setpoint_pitch = "0.00";
-String current_setpoint_roll = "0.00";
 String current_gyro_x_cal = "0.00";
 String current_gyro_y_cal = "0.00";
 String current_pid_pitch_p = "1.00";
@@ -72,20 +70,16 @@ void handlePID() {
   }
   server.send(200, "text/plain", "OK");
 }
-// Endpoint JSON con telemetria di volo. I dati batteria restano vuoti.
+// Endpoint JSON con angoli e offset grezzi del giroscopio.
 void handleTelemetry() {
-  String json = "{\"pitch\":\"" + current_pitch + "\", \"roll\":\"" +
-                current_roll + "\", \"setpoint_pitch\":\"" +
-                current_setpoint_pitch + "\", \"setpoint_roll\":\"" +
-                current_setpoint_roll + "\", \"battery_v\":\"\","
-                " \"battery_pct\":\"\", \"gyro_x_cal\":\"" + current_gyro_x_cal +
-                "\", \"gyro_y_cal\":\"" + current_gyro_y_cal +
-                "\", \"pid_pitch_p\":\"" + current_pid_pitch_p +
-                "\", \"pid_pitch_i\":\"" + current_pid_pitch_i +
-                "\", \"pid_pitch_d\":\"" + current_pid_pitch_d +
-                "\", \"pid_roll_p\":\"" + current_pid_roll_p +
-                "\", \"pid_roll_i\":\"" + current_pid_roll_i +
-                "\", \"pid_roll_d\":\"" + current_pid_roll_d + "\"}";
+  String json =
+      "{\"pitch\":\"" + current_pitch + "\", \"roll\":\"" + current_roll +
+      "\", \"gyro_x_cal\":\"" + current_gyro_x_cal + "\", \"gyro_y_cal\":\"" +
+      current_gyro_y_cal + "\", \"pid_pitch_p\":\"" + current_pid_pitch_p +
+      "\", \"pid_pitch_i\":\"" + current_pid_pitch_i +
+      "\", \"pid_pitch_d\":\"" + current_pid_pitch_d + "\", \"pid_roll_p\":\"" +
+      current_pid_roll_p + "\", \"pid_roll_i\":\"" + current_pid_roll_i +
+      "\", \"pid_roll_d\":\"" + current_pid_roll_d + "\"}";
   server.send(200, "application/json", json);
 }
 
@@ -128,25 +122,29 @@ void loop() {
         }
 
         String value = telemetryField(payload, "gyro_x_cal");
-        if (value.length() > 0) current_gyro_x_cal = value;
+        if (value.length() > 0)
+          current_gyro_x_cal = value;
         value = telemetryField(payload, "gyro_y_cal");
-        if (value.length() > 0) current_gyro_y_cal = value;
-        value = telemetryField(payload, "setpoint_pitch");
-        if (value.length() > 0) current_setpoint_pitch = value;
-        value = telemetryField(payload, "setpoint_roll");
-        if (value.length() > 0) current_setpoint_roll = value;
+        if (value.length() > 0)
+          current_gyro_y_cal = value;
         value = telemetryField(payload, "pid_pitch_p");
-        if (value.length() > 0) current_pid_pitch_p = value;
+        if (value.length() > 0)
+          current_pid_pitch_p = value;
         value = telemetryField(payload, "pid_pitch_i");
-        if (value.length() > 0) current_pid_pitch_i = value;
+        if (value.length() > 0)
+          current_pid_pitch_i = value;
         value = telemetryField(payload, "pid_pitch_d");
-        if (value.length() > 0) current_pid_pitch_d = value;
+        if (value.length() > 0)
+          current_pid_pitch_d = value;
         value = telemetryField(payload, "pid_roll_p");
-        if (value.length() > 0) current_pid_roll_p = value;
+        if (value.length() > 0)
+          current_pid_roll_p = value;
         value = telemetryField(payload, "pid_roll_i");
-        if (value.length() > 0) current_pid_roll_i = value;
+        if (value.length() > 0)
+          current_pid_roll_i = value;
         value = telemetryField(payload, "pid_roll_d");
-        if (value.length() > 0) current_pid_roll_d = value;
+        if (value.length() > 0)
+          current_pid_roll_d = value;
       }
     }
   }
