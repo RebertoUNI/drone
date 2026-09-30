@@ -28,13 +28,31 @@
 
 // Costanti Matematiche e di Sistema
 #define RAD_TO_DEG 57.2957795131f
-#define LPF_ALPHA 0.1f // Fattore filtro Passa-Basso (aumentato per ridurre phase lag)
-#define COMP_ALPHA 0.999f // Fattore filtro Complementare
-#define GYRO_SCALE 65.5f // Scala giroscopio per +/- 500 deg/s
+#define DEG_TO_RAD 0.01745329252f
+#define LPF_ALPHA                                                              \
+  0.1f // Fattore filtro Passa-Basso (aumentato per ridurre phase lag)
+#define GYRO_SCALE 65.5f       // Scala giroscopio per +/- 500 deg/s
+#define ACC_LSB_PER_G 16384.0f // Sensibilita' accelerometro per +/- 2g
+
+// Parametri filtro di Mahony (quaternioni)
+// MAHONY_KP: [rad/s] velocita' con cui l'accelerometro corregge il giroscopio.
+//   Costante di tempo ~ 1/Kp. Il vecchio complementare (alpha=0.999 a 250Hz)
+//   equivale a Kp ~ 0.25. Piu' alto = segue prima l'accelerometro ma piu'
+//   sensibile alle vibrazioni; piu' basso = piu' fiducia nel giroscopio.
+// MAHONY_KI: stima del bias residuo del giroscopio (0 = disattivato).
+// MAHONY_INT_LIMIT: limite anti-windup del bias stimato [rad/s].
+// ACC_TRUST_BAND: fiducia nell'accelerometro = 1 quando |a| = 1g e scende a 0
+//   quando |a| si discosta da 1g di questo valore (in g). Durante manovre
+//   brusche/vibrazioni l'accelerometro viene ignorato e vince il giroscopio.
+#define MAHONY_KP 0.5f
+#define MAHONY_KI 0.02f
+#define MAHONY_INT_LIMIT 0.05f
+#define ACC_TRUST_BAND 0.30f
 
 // Mapping giroscopio -> angolo
 #define GYRO_ROLL_SIGN 1.0f  // gyro X -> roll
 #define GYRO_PITCH_SIGN 1.0f // gyro Y -> pitch
+#define GYRO_YAW_SIGN 1.0f   // gyro Z -> yaw
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -58,6 +76,15 @@ float gyro_x_cal = 0.0f, gyro_y_cal = 0.0f;
 float acc_pitch_cal = -4.79f, acc_roll_cal = -0.89f; // -4.79   -0.89
 float gyro_rate_pitch = 0.0f;
 float gyro_rate_roll = 0.0f;
+
+// Variabili Filtro di Mahony (quaternioni)
+float gyro_z_cal = 0.0f;                          // Offset giroscopio Z
+float q0 = 1.0f, q1 = 0.0f, q2 = 0.0f, q3 = 0.0f; // Quaternione (body->world)
+float mahony_int_x = 0.0f, mahony_int_y = 0.0f,
+      mahony_int_z = 0.0f; // Bias gyro stimato [rad/s]
+float yaw = 0.0f; // Solo informativo: senza magnetometro deriva lentamente
+float mount_R[3][3] = {
+    {1, 0, 0}, {0, 1, 0}, {0, 0, 1}}; // Correzione montaggio IMU
 
 // Variabili UART ESP32
 uint8_t esp32_rx_byte;
@@ -90,6 +117,12 @@ static void MX_I2C1_Init(void);
 /* USER CODE BEGIN PFP */
 void MPU6050_Init(void);
 void MPU6050_Read_Filter_Compute(void);
+void IMU_BuildMountingMatrix(void);
+void IMU_ApplyMounting(float v[3]);
+void Quat_InitFromAccel(float ax, float ay, float az);
+void Quat_ToEuler(void);
+void Mahony_Update(float gx, float gy, float gz, float ax, float ay, float az,
+                   float dt);
 void PID_ComputeAndMix(void);
 /* USER CODE END PFP */
 
@@ -163,7 +196,7 @@ int main(void) {
       // --- FINE NUOVO BLOCCO TIMEOUT ---
 
       // 1. Acquisizione I2C e applicazione filtri Digitali (Passa Basso +
-      // Complementare)
+      // Mahony su quaternioni)
       MPU6050_Read_Filter_Compute();
 
       // 2. Calcolo errori, computazione PID e miscelazione motori
@@ -273,7 +306,7 @@ void MPU6050_Init(void) {
     // --- 4. CALIBRAZIONE GIROSCOPIO E ACCELEROMETRO ---
     HAL_Delay(4000);
 
-    int32_t gx_sum = 0, gy_sum = 0;
+    int32_t gx_sum = 0, gy_sum = 0, gz_sum = 0;
     float acc_pitch_sum = 0.0f, acc_roll_sum = 0.0f;
     uint8_t rec_data[14];
     const int num_samples = 2000;
@@ -284,6 +317,7 @@ void MPU6050_Init(void) {
       // Somma Giroscopio
       gx_sum += (int16_t)(rec_data[8] << 8 | rec_data[9]);
       gy_sum += (int16_t)(rec_data[10] << 8 | rec_data[11]);
+      gz_sum += (int16_t)(rec_data[12] << 8 | rec_data[13]);
 
       // Calcolo e somma angoli grezzi Accelerometro
       int16_t ax = (int16_t)(rec_data[0] << 8 | rec_data[1]);
@@ -299,26 +333,198 @@ void MPU6050_Init(void) {
     // Salva gli offset medi
     gyro_x_cal = (float)gx_sum / num_samples;
     gyro_y_cal = (float)gy_sum / num_samples;
+    gyro_z_cal = (float)gz_sum / num_samples;
 
     // Pre-carica i filtri LPF con l'ultima lettura
     ax_filt = (int16_t)(rec_data[0] << 8 | rec_data[1]);
     ay_filt = (int16_t)(rec_data[2] << 8 | rec_data[3]);
     az_filt = (int16_t)(rec_data[4] << 8 | rec_data[5]);
 
-    // Azzera gli angoli di partenza (l'errore lo sottrarremo a runtime)
-    pitch = 0.0f;
-    roll = 0.0f;
+    // Matrice di correzione del montaggio (da acc_pitch_cal / acc_roll_cal)
+    IMU_BuildMountingMatrix();
+
+    // Inizializza il quaternione dall'accelerometro: il filtro parte gia'
+    // allineato all'assetto reale, senza transitorio di convergenza.
+    Quat_InitFromAccel(ax_filt, ay_filt, az_filt);
   }
 }
 
+/* ===================== BEGIN QUAT FILTER (math) ===================== */
+
 /**
- * @brief Acquisizione, Filtro LPF (Accelerometro) e Filtro Complementare
+ * @brief Costruisce la matrice di correzione del montaggio dell'IMU.
+ *        Sostituisce la vecchia sottrazione di acc_pitch_cal/acc_roll_cal
+ *        sugli angoli: qui la correzione e' una rotazione applicata ai
+ *        vettori grezzi (accelerometro e giroscopio), quindi resta corretta
+ *        anche a inclinazioni elevate. R = Ry(pitch_cal) * Rx(roll_cal).
+ */
+void IMU_BuildMountingMatrix(void) {
+  float th = acc_pitch_cal * DEG_TO_RAD;
+  float ph = acc_roll_cal * DEG_TO_RAD;
+  float cth = cosf(th), sth = sinf(th);
+  float cph = cosf(ph), sph = sinf(ph);
+
+  mount_R[0][0] = cth;
+  mount_R[0][1] = sth * sph;
+  mount_R[0][2] = sth * cph;
+  mount_R[1][0] = 0.0f;
+  mount_R[1][1] = cph;
+  mount_R[1][2] = -sph;
+  mount_R[2][0] = -sth;
+  mount_R[2][1] = cth * sph;
+  mount_R[2][2] = cth * cph;
+}
+
+/**
+ * @brief Applica in-place la correzione di montaggio a un vettore 3D.
+ */
+void IMU_ApplyMounting(float v[3]) {
+  float x = v[0], y = v[1], z = v[2];
+  v[0] = mount_R[0][0] * x + mount_R[0][1] * y + mount_R[0][2] * z;
+  v[1] = mount_R[1][0] * x + mount_R[1][1] * y + mount_R[1][2] * z;
+  v[2] = mount_R[2][0] * x + mount_R[2][1] * y + mount_R[2][2] * z;
+}
+
+/**
+ * @brief Converte il quaternione in angoli di Eulero (gradi) -> roll, pitch,
+ *        yaw. Stesse convenzioni di segno del codice precedente.
+ */
+void Quat_ToEuler(void) {
+  float sinp = 2.0f * (q0 * q2 - q3 * q1);
+  if (sinp > 1.0f)
+    sinp = 1.0f;
+  if (sinp < -1.0f)
+    sinp = -1.0f;
+
+  roll = atan2f(2.0f * (q0 * q1 + q2 * q3), 1.0f - 2.0f * (q1 * q1 + q2 * q2)) *
+         RAD_TO_DEG;
+  pitch = asinf(sinp) * RAD_TO_DEG;
+  yaw = atan2f(2.0f * (q0 * q3 + q1 * q2), 1.0f - 2.0f * (q2 * q2 + q3 * q3)) *
+        RAD_TO_DEG;
+}
+
+/**
+ * @brief Inizializza il quaternione dall'accelerometro (yaw = 0).
+ *        Ingresso: accelerometro grezzo/filtrato (prima della correzione di
+ *        montaggio, qualsiasi unita').
+ */
+void Quat_InitFromAccel(float ax, float ay, float az) {
+  float a[3] = {ax, ay, az};
+  IMU_ApplyMounting(a);
+
+  float r = atan2f(a[1], a[2]);
+  float p = atan2f(-a[0], sqrtf(a[1] * a[1] + a[2] * a[2]));
+
+  float cr = cosf(0.5f * r), sr = sinf(0.5f * r);
+  float cp = cosf(0.5f * p), sp = sinf(0.5f * p);
+
+  q0 = cr * cp;
+  q1 = sr * cp;
+  q2 = cr * sp;
+  q3 = -sr * sp;
+
+  mahony_int_x = 0.0f;
+  mahony_int_y = 0.0f;
+  mahony_int_z = 0.0f;
+
+  Quat_ToEuler();
+}
+
+/**
+ * @brief Filtro di Mahony (PI su quaternione) con fiducia adattiva
+ *        sull'accelerometro.
+ * @param gx,gy,gz Velocita' angolari [rad/s], bias statico gia' rimosso
+ * @param ax,ay,az Accelerometro (qualsiasi unita', in LSB per ACC_LSB_PER_G)
+ * @param dt       Passo di integrazione [s]
+ */
+void Mahony_Update(float gx, float gy, float gz, float ax, float ay, float az,
+                   float dt) {
+  float ex = 0.0f, ey = 0.0f, ez = 0.0f;
+  float trust = 0.0f;
+
+  float a_norm = sqrtf(ax * ax + ay * ay + az * az);
+
+  if (a_norm > 1.0f) {
+    // Fiducia: 1 se |a| = 1g, 0 se |a| si discosta di ACC_TRUST_BAND g
+    trust = 1.0f - fabsf(a_norm / ACC_LSB_PER_G - 1.0f) / ACC_TRUST_BAND;
+    if (trust < 0.0f)
+      trust = 0.0f;
+
+    if (trust > 0.0f) {
+      float inv = 1.0f / a_norm;
+      ax *= inv;
+      ay *= inv;
+      az *= inv;
+
+      // Direzione della gravita' stimata dal quaternione (frame body)
+      float vx = 2.0f * (q1 * q3 - q0 * q2);
+      float vy = 2.0f * (q0 * q1 + q2 * q3);
+      float vz = q0 * q0 - q1 * q1 - q2 * q2 + q3 * q3;
+
+      // Errore = prodotto vettoriale tra gravita' misurata e stimata
+      ex = ay * vz - az * vy;
+      ey = az * vx - ax * vz;
+      ez = ax * vy - ay * vx;
+
+      // Termine integrale (stima del bias del giroscopio) con anti-windup
+      if (MAHONY_KI > 0.0f) {
+        mahony_int_x += MAHONY_KI * trust * ex * dt;
+        mahony_int_y += MAHONY_KI * trust * ey * dt;
+        mahony_int_z += MAHONY_KI * trust * ez * dt;
+
+        if (mahony_int_x > MAHONY_INT_LIMIT)
+          mahony_int_x = MAHONY_INT_LIMIT;
+        if (mahony_int_x < -MAHONY_INT_LIMIT)
+          mahony_int_x = -MAHONY_INT_LIMIT;
+        if (mahony_int_y > MAHONY_INT_LIMIT)
+          mahony_int_y = MAHONY_INT_LIMIT;
+        if (mahony_int_y < -MAHONY_INT_LIMIT)
+          mahony_int_y = -MAHONY_INT_LIMIT;
+        if (mahony_int_z > MAHONY_INT_LIMIT)
+          mahony_int_z = MAHONY_INT_LIMIT;
+        if (mahony_int_z < -MAHONY_INT_LIMIT)
+          mahony_int_z = -MAHONY_INT_LIMIT;
+      }
+    }
+  }
+
+  // Giroscopio corretto: rimuove il bias stimato + termine proporzionale
+  gx += mahony_int_x + MAHONY_KP * trust * ex;
+  gy += mahony_int_y + MAHONY_KP * trust * ey;
+  gz += mahony_int_z + MAHONY_KP * trust * ez;
+
+  // Integrazione del quaternione: q_dot = 0.5 * q (x) (0, gx, gy, gz)
+  float hdt = 0.5f * dt;
+  float qa = q0, qb = q1, qc = q2, qd = q3;
+  q0 = qa + (-qb * gx - qc * gy - qd * gz) * hdt;
+  q1 = qb + (qa * gx + qc * gz - qd * gy) * hdt;
+  q2 = qc + (qa * gy - qb * gz + qd * gx) * hdt;
+  q3 = qd + (qa * gz + qb * gy - qc * gx) * hdt;
+
+  // Normalizzazione
+  float qn = 1.0f / sqrtf(q0 * q0 + q1 * q1 + q2 * q2 + q3 * q3);
+  q0 *= qn;
+  q1 *= qn;
+  q2 *= qn;
+  q3 *= qn;
+}
+
+/* ====================== END QUAT FILTER (math) ====================== */
+
+/**
+ * @brief Acquisizione, Filtro LPF (Accelerometro) e Filtro di Mahony
+ *        (quaternioni)
  */
 void MPU6050_Read_Filter_Compute(void) {
   uint8_t rec_data[14];
 
   // Lettura burst da 14 byte a partire dall'indirizzo base dei dati (0x3B)
-  HAL_I2C_Mem_Read(&hi2c1, MPU6050_ADDR, 0x3B, 1, rec_data, 14, 100);
+  if (HAL_I2C_Mem_Read(&hi2c1, MPU6050_ADDR, 0x3B, 1, rec_data, 14, 100) !=
+      HAL_OK) {
+    // Lettura fallita: non usare dati non validi, mantieni la cadenza del loop
+    last_time = HAL_GetTick();
+    return;
+  }
 
   // Parsing registri grezzi
   int16_t accel_x_raw = (int16_t)(rec_data[0] << 8 | rec_data[1]);
@@ -326,22 +532,12 @@ void MPU6050_Read_Filter_Compute(void) {
   int16_t accel_z_raw = (int16_t)(rec_data[4] << 8 | rec_data[5]);
   int16_t gyro_x_raw = (int16_t)(rec_data[8] << 8 | rec_data[9]);
   int16_t gyro_y_raw = (int16_t)(rec_data[10] << 8 | rec_data[11]);
+  int16_t gyro_z_raw = (int16_t)(rec_data[12] << 8 | rec_data[13]);
 
   // Applicazione LPF Esponenziale (EMA) sui vettori accelerometrici
   ax_filt = LPF_ALPHA * accel_x_raw + (1.0f - LPF_ALPHA) * ax_filt;
   ay_filt = LPF_ALPHA * accel_y_raw + (1.0f - LPF_ALPHA) * ay_filt;
   az_filt = LPF_ALPHA * accel_z_raw + (1.0f - LPF_ALPHA) * az_filt;
-
-  // Estrazione angoli grezzi accelerometro tramite arcotangente
-  // Estrazione angoli grezzi accelerometro e SOTTRAZIONE BIAS (Offset)
-  float acc_pitch =
-      (atan2f(-ax_filt, sqrtf(ay_filt * ay_filt + az_filt * az_filt)) *
-       RAD_TO_DEG) -
-      acc_pitch_cal;
-  float acc_roll =
-      (atan2f(ay_filt, sqrtf(ax_filt * ax_filt + az_filt * az_filt)) *
-       RAD_TO_DEG) -
-      acc_roll_cal;
 
   // Aggiornamento tempo per il controllo del loop principale
   uint32_t current_time = HAL_GetTick();
@@ -353,14 +549,28 @@ void MPU6050_Read_Filter_Compute(void) {
 
   // Velocita' angolari in Gradi/Secondo con offset rimosso
   // Gyro X ruota attorno a X -> ROLL ; Gyro Y ruota attorno a Y -> PITCH
-  gyro_rate_roll = GYRO_ROLL_SIGN * (gyro_x_raw - gyro_x_cal) / GYRO_SCALE;
-  gyro_rate_pitch = GYRO_PITCH_SIGN * (gyro_y_raw - gyro_y_cal) / GYRO_SCALE;
+  float gyro[3];
+  gyro[0] = GYRO_ROLL_SIGN * (gyro_x_raw - gyro_x_cal) / GYRO_SCALE;
+  gyro[1] = GYRO_PITCH_SIGN * (gyro_y_raw - gyro_y_cal) / GYRO_SCALE;
+  gyro[2] = GYRO_YAW_SIGN * (gyro_z_raw - gyro_z_cal) / GYRO_SCALE;
 
-  // Filtro Complementare
-  roll = COMP_ALPHA * (roll + gyro_rate_roll * dt_actual) +
-         (1.0f - COMP_ALPHA) * acc_roll;
-  pitch = COMP_ALPHA * (pitch + gyro_rate_pitch * dt_actual) +
-          (1.0f - COMP_ALPHA) * acc_pitch;
+  float acc[3] = {ax_filt, ay_filt, az_filt};
+
+  // Correzione del montaggio dell'IMU (sostituisce la sottrazione degli
+  // offset angolari sull'accelerometro)
+  IMU_ApplyMounting(gyro);
+  IMU_ApplyMounting(acc);
+
+  // Rates in deg/s usati dal termine D del PID
+  gyro_rate_roll = gyro[0];
+  gyro_rate_pitch = gyro[1];
+
+  // Filtro di Mahony: gyro in rad/s, accelerometro in LSB
+  Mahony_Update(gyro[0] * DEG_TO_RAD, gyro[1] * DEG_TO_RAD,
+                gyro[2] * DEG_TO_RAD, acc[0], acc[1], acc[2], dt_actual);
+
+  // Angoli di assetto (gradi) per PID e telemetria
+  Quat_ToEuler();
 }
 
 /**
