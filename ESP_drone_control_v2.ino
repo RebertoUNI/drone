@@ -14,8 +14,6 @@ WebServer server(80);
 // Variabili globali per memorizzare telemetria
 String current_pitch = "0.00";
 String current_roll = "0.00";
-String current_gyro_x_cal = "0.00";
-String current_gyro_y_cal = "0.00";
 String current_pid_pitch_p = "1.00";
 String current_pid_pitch_i = "0.00";
 String current_pid_pitch_d = "0.00";
@@ -70,12 +68,11 @@ void handlePID() {
   }
   server.send(200, "text/plain", "OK");
 }
-// Endpoint JSON con angoli e offset grezzi del giroscopio.
+// Endpoint JSON con angoli e parametri PID.
 void handleTelemetry() {
   String json =
       "{\"pitch\":\"" + current_pitch + "\", \"roll\":\"" + current_roll +
-      "\", \"gyro_x_cal\":\"" + current_gyro_x_cal + "\", \"gyro_y_cal\":\"" +
-      current_gyro_y_cal + "\", \"pid_pitch_p\":\"" + current_pid_pitch_p +
+      "\", \"pid_pitch_p\":\"" + current_pid_pitch_p +
       "\", \"pid_pitch_i\":\"" + current_pid_pitch_i +
       "\", \"pid_pitch_d\":\"" + current_pid_pitch_d + "\", \"pid_roll_p\":\"" +
       current_pid_roll_p + "\", \"pid_roll_i\":\"" + current_pid_roll_i +
@@ -121,13 +118,7 @@ void loop() {
           current_roll = payload.substring(commaIndex1 + 1);
         }
 
-        String value = telemetryField(payload, "gyro_x_cal");
-        if (value.length() > 0)
-          current_gyro_x_cal = value;
-        value = telemetryField(payload, "gyro_y_cal");
-        if (value.length() > 0)
-          current_gyro_y_cal = value;
-        value = telemetryField(payload, "pid_pitch_p");
+        String value = telemetryField(payload, "pid_pitch_p");
         if (value.length() > 0)
           current_pid_pitch_p = value;
         value = telemetryField(payload, "pid_pitch_i");

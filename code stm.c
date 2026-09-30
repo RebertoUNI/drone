@@ -28,19 +28,13 @@
 
 // Costanti Matematiche e di Sistema
 #define RAD_TO_DEG 57.2957795131f
-#define LPF_ALPHA                                                              \
-  0.5f // Fattore filtro Passa-Basso (aumentato per ridurre phase lag)
-#define COMP_ALPHA 0.98f // Fattore filtro Complementare
+#define LPF_ALPHA 0.1f // Fattore filtro Passa-Basso (aumentato per ridurre phase lag)
+#define COMP_ALPHA 0.999f // Fattore filtro Complementare
 #define GYRO_SCALE 65.5f // Scala giroscopio per +/- 500 deg/s
 
 // Mapping giroscopio -> angolo
 #define GYRO_ROLL_SIGN 1.0f  // gyro X -> roll
 #define GYRO_PITCH_SIGN 1.0f // gyro Y -> pitch
-
-// 1 = in telemetria, al posto di gyro_x_cal / gyro_y_cal, arrivano le
-//     velocita' angolari di roll e pitch (deg/s) per verificare i segni
-// 0 = telemetria normale (gyro_x_cal / gyro_y_cal)
-#define TLM_SHOW_GYRO_RATES 0
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -75,8 +69,8 @@ volatile uint8_t telemetry_tx_busy = 0;
 
 // Stato di sistema
 uint32_t current_throttle = 1000;
-float pid_pitch_p = 1.0f, pid_pitch_i = 0.0f, pid_pitch_d = 0.0f;
-float pid_roll_p = 1.0f, pid_roll_i = 0.0f, pid_roll_d = 0.0f;
+float pid_pitch_p = 2.16f, pid_pitch_i = 0.7f, pid_pitch_d = 0.8f;
+float pid_roll_p = 2.16f, pid_roll_i = 0.9f, pid_roll_d = 0.85f;
 volatile uint8_t motors_enabled = 0;
 uint32_t motor_start_tick = 0;
 
@@ -157,7 +151,7 @@ int main(void) {
     // ==========================================
     if (current_time - last_time >= 4) {
       // --- INIZIO NUOVO BLOCCO TIMEOUT ---
-      if (motors_enabled && (current_time - motor_start_tick >= 8000)) {
+      if (motors_enabled && (current_time - motor_start_tick >= 10000)) {
         motors_enabled = 0; // Disarma il sistema
 
         // Azzera istantaneamente i motori
@@ -180,21 +174,13 @@ int main(void) {
       static uint8_t telemetry_counter = 0;
       if (++telemetry_counter >= 10) {
         if (!telemetry_tx_busy) {
-#if TLM_SHOW_GYRO_RATES
-          // Nei campi gyro_x_cal / gyro_y_cal arrivano rate roll e rate pitch
-          float tlm_g1 = gyro_rate_roll;
-          float tlm_g2 = gyro_rate_pitch;
-#else
-          float tlm_g1 = gyro_x_cal;
-          float tlm_g2 = gyro_y_cal;
-#endif
           int len =
               snprintf(telemetry_tx_buffer, sizeof(telemetry_tx_buffer),
-                       "ANG:%.2f,%.2f,gyro_x_cal:%f,gyro_y_cal:%f,"
-                       "pid_pitch_p:%.2f,pid_pitch_i:%.2f,pid_pitch_d:%.2f,"
-                       "pid_roll_p:%.2f,pid_roll_i:%.2f,pid_roll_d:%.2f\n",
-                       pitch, roll, tlm_g1, tlm_g2, pid_pitch_p, pid_pitch_i,
-                       pid_pitch_d, pid_roll_p, pid_roll_i, pid_roll_d);
+                       "ANG:%.2f,%.2f,"
+                       "pid_pitch_p:%.3f,pid_pitch_i:%.3f,pid_pitch_d:%.3f,"
+                       "pid_roll_p:%.3f,pid_roll_i:%.3f,pid_roll_d:%.3f\n",
+                       pitch, roll, pid_pitch_p, pid_pitch_i, pid_pitch_d,
+                       pid_roll_p, pid_roll_i, pid_roll_d);
 
           if (len > 0 && len < (int)sizeof(telemetry_tx_buffer)) {
             telemetry_tx_busy = 1;
