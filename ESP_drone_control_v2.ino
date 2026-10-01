@@ -20,6 +20,8 @@ String current_pid_pitch_d = "0.00";
 String current_pid_roll_p = "1.00";
 String current_pid_roll_i = "0.00";
 String current_pid_roll_d = "0.00";
+String current_takeoff_duration = "5000";
+String current_takeoff_gain[4] = {"1.000", "1.000", "1.000", "1.000"};
 
 String telemetryField(const String &payload, const char *name) {
   String prefix = String(name) + ":";
@@ -68,7 +70,22 @@ void handlePID() {
   }
   server.send(200, "text/plain", "OK");
 }
-// Endpoint JSON con angoli e parametri PID.
+
+void handleTakeoff() {
+  if (server.hasArg("duration") && server.hasArg("g1") &&
+      server.hasArg("g2") && server.hasArg("g3") && server.hasArg("g4")) {
+    String duration = server.arg("duration");
+    String g1 = server.arg("g1");
+    String g2 = server.arg("g2");
+    String g3 = server.arg("g3");
+    String g4 = server.arg("g4");
+    Serial2.printf("TAKEOFF:%s,%s,%s,%s,%s\n", duration.c_str(), g1.c_str(),
+                   g2.c_str(), g3.c_str(), g4.c_str());
+  }
+  server.send(200, "text/plain", "OK");
+}
+
+// Endpoint JSON con angoli e parametri PID e compensazione allo stacco.
 void handleTelemetry() {
   String json =
       "{\"pitch\":\"" + current_pitch + "\", \"roll\":\"" + current_roll +
@@ -76,7 +93,12 @@ void handleTelemetry() {
       "\", \"pid_pitch_i\":\"" + current_pid_pitch_i +
       "\", \"pid_pitch_d\":\"" + current_pid_pitch_d + "\", \"pid_roll_p\":\"" +
       current_pid_roll_p + "\", \"pid_roll_i\":\"" + current_pid_roll_i +
-      "\", \"pid_roll_d\":\"" + current_pid_roll_d + "\"}";
+      "\", \"pid_roll_d\":\"" + current_pid_roll_d +
+      "\", \"takeoff_duration\":\"" + current_takeoff_duration +
+      "\", \"takeoff_g1\":\"" + current_takeoff_gain[0] +
+      "\", \"takeoff_g2\":\"" + current_takeoff_gain[1] +
+      "\", \"takeoff_g3\":\"" + current_takeoff_gain[2] +
+      "\", \"takeoff_g4\":\"" + current_takeoff_gain[3] + "\"}";
   server.send(200, "application/json", json);
 }
 
@@ -94,6 +116,7 @@ void setup() {
   server.on("/cmd", HTTP_GET, handleCommand);
   server.on("/throttle", HTTP_GET, handleThrottle);
   server.on("/pid", HTTP_GET, handlePID);
+  server.on("/takeoff", HTTP_GET, handleTakeoff);
   server.on("/telemetry", HTTP_GET, handleTelemetry);
 
   server.begin();
@@ -136,6 +159,21 @@ void loop() {
         value = telemetryField(payload, "pid_roll_d");
         if (value.length() > 0)
           current_pid_roll_d = value;
+        value = telemetryField(payload, "takeoff_duration");
+        if (value.length() > 0)
+          current_takeoff_duration = value;
+        value = telemetryField(payload, "takeoff_g1");
+        if (value.length() > 0)
+          current_takeoff_gain[0] = value;
+        value = telemetryField(payload, "takeoff_g2");
+        if (value.length() > 0)
+          current_takeoff_gain[1] = value;
+        value = telemetryField(payload, "takeoff_g3");
+        if (value.length() > 0)
+          current_takeoff_gain[2] = value;
+        value = telemetryField(payload, "takeoff_g4");
+        if (value.length() > 0)
+          current_takeoff_gain[3] = value;
       }
     }
   }

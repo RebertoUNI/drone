@@ -367,6 +367,48 @@ const char index_html[] PROGMEM = R"rawliteral(
             white-space: nowrap;
         }
 
+        .takeoff-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+        }
+
+        .takeoff-field {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            text-align: left;
+            color: var(--text-dim);
+            font-size: 0.72rem;
+            font-weight: 700;
+        }
+
+        .takeoff-field input {
+            width: 100%;
+            min-height: 40px;
+            padding: 9px 10px;
+            border: 1px solid rgba(51, 65, 85, 0.8);
+            border-radius: 6px;
+            background: rgba(11, 15, 23, 0.9);
+            color: #fff;
+            font-family: ui-monospace, monospace;
+            font-size: 0.85rem;
+        }
+
+        .takeoff-field input:focus {
+            border-color: var(--accent-amber);
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.15);
+        }
+
+        .btn-takeoff {
+            width: 100%;
+            margin-top: 14px;
+            background: linear-gradient(135deg, var(--accent-amber), #d97706);
+            color: #1c1400;
+            box-shadow: 0 4px 12px rgba(251, 191, 36, 0.25);
+        }
+
         @media (max-width: 520px) {
             .card {
                 padding: 12px 8px;
@@ -565,6 +607,28 @@ const char index_html[] PROGMEM = R"rawliteral(
         <button class="btn btn-pid" onclick="sendPid()">Invia Costanti PID</button>
     </div>
 
+    <div class="card">
+        <h3>Compensazione Takeoff</h3>
+        <div class="takeoff-grid">
+            <label class="takeoff-field">Durata compensazione (ms)
+                <input type="number" id="takeoffDuration" min="0" max="30000" step="100" value="5000" inputmode="numeric">
+            </label>
+            <label class="takeoff-field">M1 Front Left
+                <input type="number" id="takeoffG1" min="0.5" max="1.5" step="0.001" value="1.000" inputmode="decimal">
+            </label>
+            <label class="takeoff-field">M2 Front Right
+                <input type="number" id="takeoffG2" min="0.5" max="1.5" step="0.001" value="1.000" inputmode="decimal">
+            </label>
+            <label class="takeoff-field">M3 Back Right
+                <input type="number" id="takeoffG3" min="0.5" max="1.5" step="0.001" value="1.000" inputmode="decimal">
+            </label>
+            <label class="takeoff-field">M4 Back Left
+                <input type="number" id="takeoffG4" min="0.5" max="1.5" step="0.001" value="1.000" inputmode="decimal">
+            </label>
+        </div>
+        <button class="btn btn-takeoff" onclick="sendTakeoff()">Invia Compensazione</button>
+    </div>
+
     <script>
         /* ============================================================
        STATO MOTORI
@@ -668,6 +732,25 @@ const char index_html[] PROGMEM = R"rawliteral(
             }
         }
 
+        function sendTakeoff() {
+            const duration = document.getElementById('takeoffDuration').value;
+            const g1 = document.getElementById('takeoffG1').value;
+            const g2 = document.getElementById('takeoffG2').value;
+            const g3 = document.getElementById('takeoffG3').value;
+            const g4 = document.getElementById('takeoffG4').value;
+
+            fetch(`/takeoff?duration=${duration}&g1=${g1}&g2=${g2}&g3=${g3}&g4=${g4}`)
+                .catch(console.error);
+        }
+
+        function updateTakeoff(id, value, decimals) {
+            const numericValue = Number(value);
+            const input = document.getElementById(id);
+            if (Number.isFinite(numericValue) && document.activeElement !== input) {
+                input.value = numericValue.toFixed(decimals);
+            }
+        }
+
         /* ============================================================
            POLLING TELEMETRIA
            ============================================================ */
@@ -683,6 +766,11 @@ const char index_html[] PROGMEM = R"rawliteral(
                     updateCurrentPid('currentRollP', data.pid_roll_p);
                     updateCurrentPid('currentRollI', data.pid_roll_i);
                     updateCurrentPid('currentRollD', data.pid_roll_d);
+                    updateTakeoff('takeoffDuration', data.takeoff_duration, 0);
+                    updateTakeoff('takeoffG1', data.takeoff_g1, 3);
+                    updateTakeoff('takeoffG2', data.takeoff_g2, 3);
+                    updateTakeoff('takeoffG3', data.takeoff_g3, 3);
+                    updateTakeoff('takeoffG4', data.takeoff_g4, 3);
                 })
                 .catch(err => console.error(err));
         }, 200);

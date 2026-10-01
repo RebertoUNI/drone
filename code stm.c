@@ -53,6 +53,11 @@
 #define GYRO_ROLL_SIGN 1.0f  // gyro X -> roll
 #define GYRO_PITCH_SIGN 1.0f // gyro Y -> pitch
 #define GYRO_YAW_SIGN 1.0f   // gyro Z -> yaw
+
+// Compensazione temporanea allo stacco: moltiplicatori PWM per motore, attivi
+// solo per TAKEOFF_COMP_DURATION_MS da quando il throttle supera la soglia.
+#define TAKEOFF_COMP_THROTTLE 1050    // soglia di "inizio volo" [us]
+#define TAKEOFF_COMP_DURATION_MS 5000 // durata della compensazione [ms]
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -91,7 +96,7 @@ uint8_t esp32_rx_byte;
 char rx_buffer[64];
 uint8_t rx_index = 0;
 volatile uint8_t packet_ready = 0;
-char telemetry_tx_buffer[192];
+char telemetry_tx_buffer[320];
 volatile uint8_t telemetry_tx_busy = 0;
 
 // Stato di sistema
@@ -104,6 +109,15 @@ uint32_t motor_start_tick = 0;
 // Variabili PID
 float error_pitch = 0, integral_pitch = 0;
 float error_roll = 0, integral_roll = 0;
+
+// Moltiplicatori PWM allo stacco (1.0 = nessuna modifica)
+// Ordine: {M1 Front Left, M2 Front Right, M3 Back Right, M4 Back Left}
+// Esempio: lato sinistro debole -> {1.03f, 0.97f, 0.97f, 1.03f}
+float takeoff_gain[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+uint32_t takeoff_comp_duration_ms = TAKEOFF_COMP_DURATION_MS;
+uint8_t takeoff_comp_started = 0;  // 1 = timer partito
+uint32_t takeoff_comp_start_tick = 0;
+uint8_t takeoff_comp_active = 0;   // 1 = moltiplicatori in uso (telemetria/debug)
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -211,9 +225,13 @@ int main(void) {
               snprintf(telemetry_tx_buffer, sizeof(telemetry_tx_buffer),
                        "ANG:%.2f,%.2f,"
                        "pid_pitch_p:%.3f,pid_pitch_i:%.3f,pid_pitch_d:%.3f,"
-                       "pid_roll_p:%.3f,pid_roll_i:%.3f,pid_roll_d:%.3f\n",
+                       "pid_roll_p:%.3f,pid_roll_i:%.3f,pid_roll_d:%.3f,"
+                       "takeoff_duration:%lu,takeoff_g1:%.3f,takeoff_g2:%.3f,"
+                       "takeoff_g3:%.3f,takeoff_g4:%.3f\n",
                        pitch, roll, pid_pitch_p, pid_pitch_i, pid_pitch_d,
-                       pid_roll_p, pid_roll_i, pid_roll_d);
+                       pid_roll_p, pid_roll_i, pid_roll_d,
+                       (unsigned long)takeoff_comp_duration_ms, takeoff_gain[0],
+                       takeoff_gain[1], takeoff_gain[2], takeoff_gain[3]);
 
           if (len > 0 && len < (int)sizeof(telemetry_tx_buffer)) {
             telemetry_tx_busy = 1;
@@ -258,6 +276,24 @@ int main(void) {
         int esp32_throttle = atoi(&local_buffer[4]);
         if (esp32_throttle >= 0 && esp32_throttle <= 255) {
           current_throttle = 1000 + ((esp32_throttle * 1000) / 255);
+        }
+      }
+      // Parametri compensazione allo stacco: durata e guadagni motori
+      else if (strncmp(local_buffer, "TAKEOFF:", 8) == 0) {
+        unsigned long duration_ms;
+        float gain[4];
+        int parsed = sscanf(&local_buffer[8], "%lu,%f,%f,%f,%f", &duration_ms,
+                            &gain[0], &gain[1], &gain[2], &gain[3]);
+
+        if (parsed == 5 && duration_ms <= 30000UL &&
+            gain[0] >= 0.5f && gain[0] <= 1.5f && gain[1] >= 0.5f &&
+            gain[1] <= 1.5f && gain[2] >= 0.5f && gain[2] <= 1.5f &&
+            gain[3] >= 0.5f && gain[3] <= 1.5f) {
+          takeoff_comp_duration_ms = (uint32_t)duration_ms;
+          for (int i = 0; i < 4; i++) {
+            takeoff_gain[i] = gain[i];
+          }
+          takeoff_comp_started = 0;
         }
       }
       // Parametri PID
@@ -578,11 +614,29 @@ void MPU6050_Read_Filter_Compute(void) {
  */
 void PID_ComputeAndMix(void) {
   // Safety check
-  if (!motors_enabled || current_throttle < 1050) {
+  if (!motors_enabled || current_throttle < TAKEOFF_COMP_THROTTLE) {
     integral_pitch = 0;
     integral_roll = 0;
+    takeoff_comp_started = 0; // al prossimo stacco il timer riparte
+    takeoff_comp_active = 0;
+
+    // Porta sempre i motori al minimo quando il controllo non e' attivo.
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1000);
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 1000);
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, 1000);
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, 1000);
     return;
   }
+
+  // Timer compensazione: parte alla prima iterazione con throttle >= soglia
+  // (qui ci arriviamo solo se current_throttle >= TAKEOFF_COMP_THROTTLE)
+  uint32_t now_tick = HAL_GetTick();
+  if (!takeoff_comp_started) {
+    takeoff_comp_started = 1;
+    takeoff_comp_start_tick = now_tick;
+  }
+  takeoff_comp_active =
+      ((now_tick - takeoff_comp_start_tick) < takeoff_comp_duration_ms);
 
   // Setpoint 0 per hovering
   error_pitch = 0 - pitch;
@@ -605,10 +659,23 @@ void PID_ComputeAndMix(void) {
 
   // Motor Mixing X-Config (adattare i segni a seconda dell'orientamento
   // dell'IMU)
-  int16_t m1 = current_throttle + pid_pitch_out + pid_roll_out; // Front Left
-  int16_t m2 = current_throttle + pid_pitch_out - pid_roll_out; // Front Right
-  int16_t m3 = current_throttle - pid_pitch_out - pid_roll_out; // Back Right
-  int16_t m4 = current_throttle - pid_pitch_out + pid_roll_out; // Back Left
+  float f1 = current_throttle + pid_pitch_out + pid_roll_out; // Front Left
+  float f2 = current_throttle + pid_pitch_out - pid_roll_out; // Front Right
+  float f3 = current_throttle - pid_pitch_out - pid_roll_out; // Back Right
+  float f4 = current_throttle - pid_pitch_out + pid_roll_out; // Back Left
+
+  // Moltiplicatore PWM per motore (solo nei primi secondi di volo)
+  if (takeoff_comp_active) {
+    f1 *= takeoff_gain[0];
+    f2 *= takeoff_gain[1];
+    f3 *= takeoff_gain[2];
+    f4 *= takeoff_gain[3];
+  }
+
+  int16_t m1 = (int16_t)f1;
+  int16_t m2 = (int16_t)f2;
+  int16_t m3 = (int16_t)f3;
+  int16_t m4 = (int16_t)f4;
 
   // Saturazione segnali (Anti-Windup Meccanico)
   m1 = (m1 > 2000) ? 2000 : (m1 < 1000 ? 1000 : m1);
