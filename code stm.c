@@ -28,36 +28,39 @@
 
 // Costanti Matematiche e di Sistema
 #define RAD_TO_DEG 57.2957795131f
-#define DEG_TO_RAD 0.01745329252f
 #define LPF_ALPHA                                                              \
   0.1f // Fattore filtro Passa-Basso (aumentato per ridurre phase lag)
-#define GYRO_SCALE 65.5f       // Scala giroscopio per +/- 500 deg/s
-#define ACC_LSB_PER_G 16384.0f // Sensibilita' accelerometro per +/- 2g
-
-// Parametri filtro di Mahony (quaternioni)
-// MAHONY_KP: [rad/s] velocita' con cui l'accelerometro corregge il giroscopio.
-//   Costante di tempo ~ 1/Kp. Il vecchio complementare (alpha=0.999 a 250Hz)
-//   equivale a Kp ~ 0.25. Piu' alto = segue prima l'accelerometro ma piu'
-//   sensibile alle vibrazioni; piu' basso = piu' fiducia nel giroscopio.
-// MAHONY_KI: stima del bias residuo del giroscopio (0 = disattivato).
-// MAHONY_INT_LIMIT: limite anti-windup del bias stimato [rad/s].
-// ACC_TRUST_BAND: fiducia nell'accelerometro = 1 quando |a| = 1g e scende a 0
-//   quando |a| si discosta da 1g di questo valore (in g). Durante manovre
-//   brusche/vibrazioni l'accelerometro viene ignorato e vince il giroscopio.
-#define MAHONY_KP 0.5f
-#define MAHONY_KI 0.02f
-#define MAHONY_INT_LIMIT 0.05f
-#define ACC_TRUST_BAND 0.30f
+#define COMP_ALPHA 0.999f // Fattore filtro Complementare
+#define GYRO_SCALE 65.5f  // Scala giroscopio per +/- 500 deg/s
 
 // Mapping giroscopio -> angolo
 #define GYRO_ROLL_SIGN 1.0f  // gyro X -> roll
 #define GYRO_PITCH_SIGN 1.0f // gyro Y -> pitch
-#define GYRO_YAW_SIGN 1.0f   // gyro Z -> yaw
+#define GYRO_YAW_SIGN 1.0f   // gyro Z -> yaw rate
 
-// Compensazione temporanea allo stacco: moltiplicatori PWM per motore, attivi
-// solo per TAKEOFF_COMP_DURATION_MS da quando il throttle supera la soglia.
-#define TAKEOFF_COMP_THROTTLE 1050    // soglia di "inizio volo" [us]
-#define TAKEOFF_COMP_DURATION_MS 5000 // durata della compensazione [ms]
+// Yaw: segno di miscelazione e limiti
+// Se il drone, con yaw attivo, tende a ruotare SEMPRE PIU' VELOCE invece di
+// stabilizzarsi, inverti YAW_MIX_SIGN (1.0f <-> -1.0f).
+#define YAW_MIX_SIGN 1.0f
+#define YAW_OUT_MAX 150.0f // massima correzione yaw in us sui motori
+#define YAW_I_MAX 60.0f    // limite anti-windup dell'integrale yaw
+#define YAW_D_LPF 0.2f     // filtro passa-basso sulla derivata yaw (0..1)
+
+// Controllo direzionale da web (inclinazione fissa, non graduale)
+#define DIR_TILT_DEG 5.0f      // inclinazione MASSIMA (joystick a fondo corsa)
+#define DIR_YAW_RATE_DPS 30.0f // velocita' di imbardata in deg/s
+#define DIR_TIMEOUT_MS 400     // se non arrivano DIR, torna in piano
+// Se un comando va nel verso sbagliato, metti -1.0f
+#define DIR_PITCH_SIGN 1.0f
+#define DIR_ROLL_SIGN 1.0f
+#define DIR_YAW_SIGN 1.0f
+
+// Sicurezza e trim motori
+#define MOTOR_TIMEOUT_MS 12000 // spegnimento automatico dopo 8 s
+#define TRIM_MIN 0.80f         // limiti moltiplicatori motori
+#define TRIM_MAX 1.20f
+#define RX_LINE_LEN 64
+#define RX_QUEUE_LEN 4
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -77,47 +80,45 @@ uint32_t last_time = 0;
 float dt_actual = 0.004f;
 
 // Variabili Calibrazione
-float gyro_x_cal = 0.0f, gyro_y_cal = 0.0f;
+float gyro_x_cal = 0.0f, gyro_y_cal = 0.0f, gyro_z_cal = 0.0f;
 float acc_pitch_cal = -4.79f, acc_roll_cal = -0.89f; // -4.79   -0.89
 float gyro_rate_pitch = 0.0f;
 float gyro_rate_roll = 0.0f;
-
-// Variabili Filtro di Mahony (quaternioni)
-float gyro_z_cal = 0.0f;                          // Offset giroscopio Z
-float q0 = 1.0f, q1 = 0.0f, q2 = 0.0f, q3 = 0.0f; // Quaternione (body->world)
-float mahony_int_x = 0.0f, mahony_int_y = 0.0f,
-      mahony_int_z = 0.0f; // Bias gyro stimato [rad/s]
-float yaw = 0.0f; // Solo informativo: senza magnetometro deriva lentamente
-float mount_R[3][3] = {
-    {1, 0, 0}, {0, 1, 0}, {0, 0, 1}}; // Correzione montaggio IMU
+float gyro_rate_yaw = 0.0f;
 
 // Variabili UART ESP32
 uint8_t esp32_rx_byte;
-char rx_buffer[64];
+char rx_line[RX_LINE_LEN]; // riga in costruzione (ISR)
 uint8_t rx_index = 0;
-volatile uint8_t packet_ready = 0;
-char telemetry_tx_buffer[320];
+volatile uint8_t rx_overflow = 0;
+char rx_queue[RX_QUEUE_LEN][RX_LINE_LEN]; // coda comandi ISR -> main
+volatile uint8_t rx_q_head = 0, rx_q_tail = 0;
+char telemetry_tx_buffer[384];
 volatile uint8_t telemetry_tx_busy = 0;
 
 // Stato di sistema
 uint32_t current_throttle = 1000;
 float pid_pitch_p = 2.16f, pid_pitch_i = 0.7f, pid_pitch_d = 0.8f;
 float pid_roll_p = 2.16f, pid_roll_i = 0.9f, pid_roll_d = 0.85f;
+// PID Yaw (controllo sulla velocita' angolare, setpoint 0 deg/s).
+// Parti con valori bassi e alzali dalla pagina web.
+float pid_yaw_p = 0.3f, pid_yaw_i = 0.8f, pid_yaw_d = 0.1f;
 volatile uint8_t motors_enabled = 0;
 uint32_t motor_start_tick = 0;
+
+// Moltiplicatori motori (1.0 = nessuna correzione) - VALORI DI DEFAULT
+// 0 = M1 Front Left, 1 = M2 Front Right, 2 = M3 Back Right, 3 = M4 Back Left
+float motor_trim[4] = {0.900f, 1.060f, 1.170f, 1.080f};
 
 // Variabili PID
 float error_pitch = 0, integral_pitch = 0;
 float error_roll = 0, integral_roll = 0;
+float error_yaw = 0, integral_yaw = 0;
+float prev_gyro_rate_yaw = 0, yaw_d_filt = 0;
 
-// Moltiplicatori PWM allo stacco (1.0 = nessuna modifica)
-// Ordine: {M1 Front Left, M2 Front Right, M3 Back Right, M4 Back Left}
-// Esempio: lato sinistro debole -> {1.03f, 0.97f, 0.97f, 1.03f}
-float takeoff_gain[4] = {1.0f, 1.0f, 1.0f, 1.0f};
-uint32_t takeoff_comp_duration_ms = TAKEOFF_COMP_DURATION_MS;
-uint8_t takeoff_comp_started = 0;  // 1 = timer partito
-uint32_t takeoff_comp_start_tick = 0;
-uint8_t takeoff_comp_active = 0;   // 1 = moltiplicatori in uso (telemetria/debug)
+// Setpoint da comando direzionale (0 = hovering)
+float sp_pitch = 0.0f, sp_roll = 0.0f, sp_yaw_rate = 0.0f;
+uint32_t dir_last_tick = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -131,13 +132,9 @@ static void MX_I2C1_Init(void);
 /* USER CODE BEGIN PFP */
 void MPU6050_Init(void);
 void MPU6050_Read_Filter_Compute(void);
-void IMU_BuildMountingMatrix(void);
-void IMU_ApplyMounting(float v[3]);
-void Quat_InitFromAccel(float ax, float ay, float az);
-void Quat_ToEuler(void);
-void Mahony_Update(float gx, float gy, float gz, float ax, float ay, float az,
-                   float dt);
 void PID_ComputeAndMix(void);
+void Motors_Kill(void);
+void Process_Command(char *line);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -193,24 +190,32 @@ int main(void) {
   while (1) {
     uint32_t current_time = HAL_GetTick();
 
+    // WATCHDOG: spegnimento automatico dopo 8 s, controllato ad ogni giro
+    // (fuori dal blocco a 4 ms)
+    if (motors_enabled &&
+        (current_time - motor_start_tick >= MOTOR_TIMEOUT_MS)) {
+      Motors_Kill();
+    }
+
+    // Timeout comando direzionale: senza DIR recenti torna in piano
+    if ((sp_pitch != 0.0f || sp_roll != 0.0f || sp_yaw_rate != 0.0f) &&
+        (current_time - dir_last_tick >= DIR_TIMEOUT_MS)) {
+      sp_pitch = 0.0f;
+      sp_roll = 0.0f;
+      sp_yaw_rate = 0.0f;
+    }
+
+    // Se la ricezione UART si fosse fermata (errore), riarmala
+    if (huart2.RxState == HAL_UART_STATE_READY) {
+      HAL_UART_Receive_IT(&huart2, &esp32_rx_byte, 1);
+    }
+
     // ==========================================
     // CONTROL LOOP: Eseguito ogni 4ms (250Hz)
     // ==========================================
     if (current_time - last_time >= 4) {
-      // --- INIZIO NUOVO BLOCCO TIMEOUT ---
-      if (motors_enabled && (current_time - motor_start_tick >= 10000)) {
-        motors_enabled = 0; // Disarma il sistema
-
-        // Azzera istantaneamente i motori
-        __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1000);
-        __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 1000);
-        __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, 1000);
-        __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, 1000);
-      }
-      // --- FINE NUOVO BLOCCO TIMEOUT ---
-
       // 1. Acquisizione I2C e applicazione filtri Digitali (Passa Basso +
-      // Mahony su quaternioni)
+      // Complementare)
       MPU6050_Read_Filter_Compute();
 
       // 2. Calcolo errori, computazione PID e miscelazione motori
@@ -221,17 +226,19 @@ int main(void) {
       static uint8_t telemetry_counter = 0;
       if (++telemetry_counter >= 10) {
         if (!telemetry_tx_busy) {
-          int len =
-              snprintf(telemetry_tx_buffer, sizeof(telemetry_tx_buffer),
-                       "ANG:%.2f,%.2f,"
-                       "pid_pitch_p:%.3f,pid_pitch_i:%.3f,pid_pitch_d:%.3f,"
-                       "pid_roll_p:%.3f,pid_roll_i:%.3f,pid_roll_d:%.3f,"
-                       "takeoff_duration:%lu,takeoff_g1:%.3f,takeoff_g2:%.3f,"
-                       "takeoff_g3:%.3f,takeoff_g4:%.3f\n",
-                       pitch, roll, pid_pitch_p, pid_pitch_i, pid_pitch_d,
-                       pid_roll_p, pid_roll_i, pid_roll_d,
-                       (unsigned long)takeoff_comp_duration_ms, takeoff_gain[0],
-                       takeoff_gain[1], takeoff_gain[2], takeoff_gain[3]);
+          int len = snprintf(
+              telemetry_tx_buffer, sizeof(telemetry_tx_buffer),
+              "ANG:%.2f,%.2f,"
+              "yaw_rate:%.2f,"
+              "pid_pitch_p:%.3f,pid_pitch_i:%.3f,pid_pitch_d:%.3f,"
+              "pid_roll_p:%.3f,pid_roll_i:%.3f,pid_roll_d:%.3f,"
+              "pid_yaw_p:%.3f,pid_yaw_i:%.3f,pid_yaw_d:%.3f,"
+              "trim1:%.3f,trim2:%.3f,trim3:%.3f,trim4:%.3f,"
+              "motors:%d\n",
+              pitch, roll, gyro_rate_yaw, pid_pitch_p, pid_pitch_i, pid_pitch_d,
+              pid_roll_p, pid_roll_i, pid_roll_d, pid_yaw_p, pid_yaw_i,
+              pid_yaw_d, motor_trim[0], motor_trim[1], motor_trim[2],
+              motor_trim[3], (int)motors_enabled);
 
           if (len > 0 && len < (int)sizeof(telemetry_tx_buffer)) {
             telemetry_tx_busy = 1;
@@ -246,62 +253,14 @@ int main(void) {
     }
 
     // ==========================================
-    // PARSING DEI COMANDI ESP32 (Asincrono)
+    // PARSING DEI COMANDI ESP32 (coda riempita dalla ISR)
     // ==========================================
-    if (packet_ready) {
-      char local_buffer[64];
-
-      __disable_irq();
-      strncpy(local_buffer, rx_buffer, sizeof(local_buffer));
-      memset(rx_buffer, 0, sizeof(rx_buffer));
-      rx_index = 0;
-      packet_ready = 0;
-      __enable_irq();
-
-      // Comandi Generici
-      if (strncmp(local_buffer, "CMD:", 4) == 0) {
-        if (local_buffer[4] == 't') {
-          motors_enabled = 1;
-          motor_start_tick = HAL_GetTick();
-        } else if (local_buffer[4] == 's') {
-          motors_enabled = 0;
-          __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1000);
-          __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 1000);
-          __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, 1000);
-          __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, 1000);
-        }
-      }
-      // Acceleratore
-      else if (strncmp(local_buffer, "THR:", 4) == 0) {
-        int esp32_throttle = atoi(&local_buffer[4]);
-        if (esp32_throttle >= 0 && esp32_throttle <= 255) {
-          current_throttle = 1000 + ((esp32_throttle * 1000) / 255);
-        }
-      }
-      // Parametri compensazione allo stacco: durata e guadagni motori
-      else if (strncmp(local_buffer, "TAKEOFF:", 8) == 0) {
-        unsigned long duration_ms;
-        float gain[4];
-        int parsed = sscanf(&local_buffer[8], "%lu,%f,%f,%f,%f", &duration_ms,
-                            &gain[0], &gain[1], &gain[2], &gain[3]);
-
-        if (parsed == 5 && duration_ms <= 30000UL &&
-            gain[0] >= 0.5f && gain[0] <= 1.5f && gain[1] >= 0.5f &&
-            gain[1] <= 1.5f && gain[2] >= 0.5f && gain[2] <= 1.5f &&
-            gain[3] >= 0.5f && gain[3] <= 1.5f) {
-          takeoff_comp_duration_ms = (uint32_t)duration_ms;
-          for (int i = 0; i < 4; i++) {
-            takeoff_gain[i] = gain[i];
-          }
-          takeoff_comp_started = 0;
-        }
-      }
-      // Parametri PID
-      else if (strncmp(local_buffer, "PID:", 4) == 0) {
-        sscanf(&local_buffer[4], "%f,%f,%f,%f,%f,%f", &pid_pitch_p,
-               &pid_pitch_i, &pid_pitch_d, &pid_roll_p, &pid_roll_i,
-               &pid_roll_d);
-      }
+    while (rx_q_tail != rx_q_head) {
+      char local_buffer[RX_LINE_LEN];
+      strncpy(local_buffer, rx_queue[rx_q_tail], RX_LINE_LEN - 1);
+      local_buffer[RX_LINE_LEN - 1] = '\0';
+      rx_q_tail = (rx_q_tail + 1) % RX_QUEUE_LEN;
+      Process_Command(local_buffer);
     }
     /* USER CODE END WHILE */
     /* USER CODE BEGIN 3 */
@@ -376,191 +335,20 @@ void MPU6050_Init(void) {
     ay_filt = (int16_t)(rec_data[2] << 8 | rec_data[3]);
     az_filt = (int16_t)(rec_data[4] << 8 | rec_data[5]);
 
-    // Matrice di correzione del montaggio (da acc_pitch_cal / acc_roll_cal)
-    IMU_BuildMountingMatrix();
-
-    // Inizializza il quaternione dall'accelerometro: il filtro parte gia'
-    // allineato all'assetto reale, senza transitorio di convergenza.
-    Quat_InitFromAccel(ax_filt, ay_filt, az_filt);
+    // Azzera gli angoli di partenza (l'errore lo sottrarremo a runtime)
+    pitch = 0.0f;
+    roll = 0.0f;
   }
 }
 
-/* ===================== BEGIN QUAT FILTER (math) ===================== */
-
 /**
- * @brief Costruisce la matrice di correzione del montaggio dell'IMU.
- *        Sostituisce la vecchia sottrazione di acc_pitch_cal/acc_roll_cal
- *        sugli angoli: qui la correzione e' una rotazione applicata ai
- *        vettori grezzi (accelerometro e giroscopio), quindi resta corretta
- *        anche a inclinazioni elevate. R = Ry(pitch_cal) * Rx(roll_cal).
- */
-void IMU_BuildMountingMatrix(void) {
-  float th = acc_pitch_cal * DEG_TO_RAD;
-  float ph = acc_roll_cal * DEG_TO_RAD;
-  float cth = cosf(th), sth = sinf(th);
-  float cph = cosf(ph), sph = sinf(ph);
-
-  mount_R[0][0] = cth;
-  mount_R[0][1] = sth * sph;
-  mount_R[0][2] = sth * cph;
-  mount_R[1][0] = 0.0f;
-  mount_R[1][1] = cph;
-  mount_R[1][2] = -sph;
-  mount_R[2][0] = -sth;
-  mount_R[2][1] = cth * sph;
-  mount_R[2][2] = cth * cph;
-}
-
-/**
- * @brief Applica in-place la correzione di montaggio a un vettore 3D.
- */
-void IMU_ApplyMounting(float v[3]) {
-  float x = v[0], y = v[1], z = v[2];
-  v[0] = mount_R[0][0] * x + mount_R[0][1] * y + mount_R[0][2] * z;
-  v[1] = mount_R[1][0] * x + mount_R[1][1] * y + mount_R[1][2] * z;
-  v[2] = mount_R[2][0] * x + mount_R[2][1] * y + mount_R[2][2] * z;
-}
-
-/**
- * @brief Converte il quaternione in angoli di Eulero (gradi) -> roll, pitch,
- *        yaw. Stesse convenzioni di segno del codice precedente.
- */
-void Quat_ToEuler(void) {
-  float sinp = 2.0f * (q0 * q2 - q3 * q1);
-  if (sinp > 1.0f)
-    sinp = 1.0f;
-  if (sinp < -1.0f)
-    sinp = -1.0f;
-
-  roll = atan2f(2.0f * (q0 * q1 + q2 * q3), 1.0f - 2.0f * (q1 * q1 + q2 * q2)) *
-         RAD_TO_DEG;
-  pitch = asinf(sinp) * RAD_TO_DEG;
-  yaw = atan2f(2.0f * (q0 * q3 + q1 * q2), 1.0f - 2.0f * (q2 * q2 + q3 * q3)) *
-        RAD_TO_DEG;
-}
-
-/**
- * @brief Inizializza il quaternione dall'accelerometro (yaw = 0).
- *        Ingresso: accelerometro grezzo/filtrato (prima della correzione di
- *        montaggio, qualsiasi unita').
- */
-void Quat_InitFromAccel(float ax, float ay, float az) {
-  float a[3] = {ax, ay, az};
-  IMU_ApplyMounting(a);
-
-  float r = atan2f(a[1], a[2]);
-  float p = atan2f(-a[0], sqrtf(a[1] * a[1] + a[2] * a[2]));
-
-  float cr = cosf(0.5f * r), sr = sinf(0.5f * r);
-  float cp = cosf(0.5f * p), sp = sinf(0.5f * p);
-
-  q0 = cr * cp;
-  q1 = sr * cp;
-  q2 = cr * sp;
-  q3 = -sr * sp;
-
-  mahony_int_x = 0.0f;
-  mahony_int_y = 0.0f;
-  mahony_int_z = 0.0f;
-
-  Quat_ToEuler();
-}
-
-/**
- * @brief Filtro di Mahony (PI su quaternione) con fiducia adattiva
- *        sull'accelerometro.
- * @param gx,gy,gz Velocita' angolari [rad/s], bias statico gia' rimosso
- * @param ax,ay,az Accelerometro (qualsiasi unita', in LSB per ACC_LSB_PER_G)
- * @param dt       Passo di integrazione [s]
- */
-void Mahony_Update(float gx, float gy, float gz, float ax, float ay, float az,
-                   float dt) {
-  float ex = 0.0f, ey = 0.0f, ez = 0.0f;
-  float trust = 0.0f;
-
-  float a_norm = sqrtf(ax * ax + ay * ay + az * az);
-
-  if (a_norm > 1.0f) {
-    // Fiducia: 1 se |a| = 1g, 0 se |a| si discosta di ACC_TRUST_BAND g
-    trust = 1.0f - fabsf(a_norm / ACC_LSB_PER_G - 1.0f) / ACC_TRUST_BAND;
-    if (trust < 0.0f)
-      trust = 0.0f;
-
-    if (trust > 0.0f) {
-      float inv = 1.0f / a_norm;
-      ax *= inv;
-      ay *= inv;
-      az *= inv;
-
-      // Direzione della gravita' stimata dal quaternione (frame body)
-      float vx = 2.0f * (q1 * q3 - q0 * q2);
-      float vy = 2.0f * (q0 * q1 + q2 * q3);
-      float vz = q0 * q0 - q1 * q1 - q2 * q2 + q3 * q3;
-
-      // Errore = prodotto vettoriale tra gravita' misurata e stimata
-      ex = ay * vz - az * vy;
-      ey = az * vx - ax * vz;
-      ez = ax * vy - ay * vx;
-
-      // Termine integrale (stima del bias del giroscopio) con anti-windup
-      if (MAHONY_KI > 0.0f) {
-        mahony_int_x += MAHONY_KI * trust * ex * dt;
-        mahony_int_y += MAHONY_KI * trust * ey * dt;
-        mahony_int_z += MAHONY_KI * trust * ez * dt;
-
-        if (mahony_int_x > MAHONY_INT_LIMIT)
-          mahony_int_x = MAHONY_INT_LIMIT;
-        if (mahony_int_x < -MAHONY_INT_LIMIT)
-          mahony_int_x = -MAHONY_INT_LIMIT;
-        if (mahony_int_y > MAHONY_INT_LIMIT)
-          mahony_int_y = MAHONY_INT_LIMIT;
-        if (mahony_int_y < -MAHONY_INT_LIMIT)
-          mahony_int_y = -MAHONY_INT_LIMIT;
-        if (mahony_int_z > MAHONY_INT_LIMIT)
-          mahony_int_z = MAHONY_INT_LIMIT;
-        if (mahony_int_z < -MAHONY_INT_LIMIT)
-          mahony_int_z = -MAHONY_INT_LIMIT;
-      }
-    }
-  }
-
-  // Giroscopio corretto: rimuove il bias stimato + termine proporzionale
-  gx += mahony_int_x + MAHONY_KP * trust * ex;
-  gy += mahony_int_y + MAHONY_KP * trust * ey;
-  gz += mahony_int_z + MAHONY_KP * trust * ez;
-
-  // Integrazione del quaternione: q_dot = 0.5 * q (x) (0, gx, gy, gz)
-  float hdt = 0.5f * dt;
-  float qa = q0, qb = q1, qc = q2, qd = q3;
-  q0 = qa + (-qb * gx - qc * gy - qd * gz) * hdt;
-  q1 = qb + (qa * gx + qc * gz - qd * gy) * hdt;
-  q2 = qc + (qa * gy - qb * gz + qd * gx) * hdt;
-  q3 = qd + (qa * gz + qb * gy - qc * gx) * hdt;
-
-  // Normalizzazione
-  float qn = 1.0f / sqrtf(q0 * q0 + q1 * q1 + q2 * q2 + q3 * q3);
-  q0 *= qn;
-  q1 *= qn;
-  q2 *= qn;
-  q3 *= qn;
-}
-
-/* ====================== END QUAT FILTER (math) ====================== */
-
-/**
- * @brief Acquisizione, Filtro LPF (Accelerometro) e Filtro di Mahony
- *        (quaternioni)
+ * @brief Acquisizione, Filtro LPF (Accelerometro) e Filtro Complementare
  */
 void MPU6050_Read_Filter_Compute(void) {
   uint8_t rec_data[14];
 
   // Lettura burst da 14 byte a partire dall'indirizzo base dei dati (0x3B)
-  if (HAL_I2C_Mem_Read(&hi2c1, MPU6050_ADDR, 0x3B, 1, rec_data, 14, 100) !=
-      HAL_OK) {
-    // Lettura fallita: non usare dati non validi, mantieni la cadenza del loop
-    last_time = HAL_GetTick();
-    return;
-  }
+  HAL_I2C_Mem_Read(&hi2c1, MPU6050_ADDR, 0x3B, 1, rec_data, 14, 100);
 
   // Parsing registri grezzi
   int16_t accel_x_raw = (int16_t)(rec_data[0] << 8 | rec_data[1]);
@@ -575,6 +363,16 @@ void MPU6050_Read_Filter_Compute(void) {
   ay_filt = LPF_ALPHA * accel_y_raw + (1.0f - LPF_ALPHA) * ay_filt;
   az_filt = LPF_ALPHA * accel_z_raw + (1.0f - LPF_ALPHA) * az_filt;
 
+  // Estrazione angoli grezzi accelerometro e SOTTRAZIONE BIAS (Offset)
+  float acc_pitch =
+      (atan2f(-ax_filt, sqrtf(ay_filt * ay_filt + az_filt * az_filt)) *
+       RAD_TO_DEG) -
+      acc_pitch_cal;
+  float acc_roll =
+      (atan2f(ay_filt, sqrtf(ax_filt * ax_filt + az_filt * az_filt)) *
+       RAD_TO_DEG) -
+      acc_roll_cal;
+
   // Aggiornamento tempo per il controllo del loop principale
   uint32_t current_time = HAL_GetTick();
   last_time = current_time;
@@ -585,42 +383,118 @@ void MPU6050_Read_Filter_Compute(void) {
 
   // Velocita' angolari in Gradi/Secondo con offset rimosso
   // Gyro X ruota attorno a X -> ROLL ; Gyro Y ruota attorno a Y -> PITCH
-  float gyro[3];
-  gyro[0] = GYRO_ROLL_SIGN * (gyro_x_raw - gyro_x_cal) / GYRO_SCALE;
-  gyro[1] = GYRO_PITCH_SIGN * (gyro_y_raw - gyro_y_cal) / GYRO_SCALE;
-  gyro[2] = GYRO_YAW_SIGN * (gyro_z_raw - gyro_z_cal) / GYRO_SCALE;
+  // Gyro Z ruota attorno a Z -> YAW
+  gyro_rate_roll = GYRO_ROLL_SIGN * (gyro_x_raw - gyro_x_cal) / GYRO_SCALE;
+  gyro_rate_pitch = GYRO_PITCH_SIGN * (gyro_y_raw - gyro_y_cal) / GYRO_SCALE;
+  gyro_rate_yaw = GYRO_YAW_SIGN * (gyro_z_raw - gyro_z_cal) / GYRO_SCALE;
 
-  float acc[3] = {ax_filt, ay_filt, az_filt};
+  // Filtro Complementare
+  roll = COMP_ALPHA * (roll + gyro_rate_roll * dt_actual) +
+         (1.0f - COMP_ALPHA) * acc_roll;
+  pitch = COMP_ALPHA * (pitch + gyro_rate_pitch * dt_actual) +
+          (1.0f - COMP_ALPHA) * acc_pitch;
+}
 
-  // Correzione del montaggio dell'IMU (sostituisce la sottrazione degli
-  // offset angolari sull'accelerometro)
-  IMU_ApplyMounting(gyro);
-  IMU_ApplyMounting(acc);
+/**
+ * @brief Spegne subito tutti i motori. Chiamabile da ISR e da main.
+ */
+void Motors_Kill(void) {
+  motors_enabled = 0;
+  current_throttle = 1000;
+  integral_pitch = 0;
+  integral_roll = 0;
+  integral_yaw = 0;
+  sp_pitch = 0.0f;
+  sp_roll = 0.0f;
+  sp_yaw_rate = 0.0f;
+  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1000);
+  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 1000);
+  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, 1000);
+  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, 1000);
+}
 
-  // Rates in deg/s usati dal termine D del PID
-  gyro_rate_roll = gyro[0];
-  gyro_rate_pitch = gyro[1];
-
-  // Filtro di Mahony: gyro in rad/s, accelerometro in LSB
-  Mahony_Update(gyro[0] * DEG_TO_RAD, gyro[1] * DEG_TO_RAD,
-                gyro[2] * DEG_TO_RAD, acc[0], acc[1], acc[2], dt_actual);
-
-  // Angoli di assetto (gradi) per PID e telemetria
-  Quat_ToEuler();
+/**
+ * @brief Interpreta una riga di comando ricevuta dall'ESP32
+ */
+void Process_Command(char *line) {
+  if (strncmp(line, "CMD:", 4) == 0) {
+    if (line[4] == 't') {
+      if (!motors_enabled) { // un secondo 't' NON rinnova il timer degli 8 s
+        motor_start_tick = HAL_GetTick();
+        motors_enabled = 1;
+      }
+    } else if (line[4] == 's' || line[4] == 'e') {
+      Motors_Kill(); // (gia' gestito in ISR, qui per sicurezza)
+    }
+  } else if (strncmp(line, "THR:", 4) == 0) {
+    int esp32_throttle = atoi(&line[4]);
+    if (esp32_throttle >= 0 && esp32_throttle <= 255) {
+      current_throttle = 1000 + ((esp32_throttle * 1000) / 255);
+    }
+  } else if (strncmp(line, "PID:", 4) == 0) {
+    float v[6];
+    if (sscanf(&line[4], "%f,%f,%f,%f,%f,%f", &v[0], &v[1], &v[2], &v[3], &v[4],
+               &v[5]) == 6) {
+      pid_pitch_p = v[0];
+      pid_pitch_i = v[1];
+      pid_pitch_d = v[2];
+      pid_roll_p = v[3];
+      pid_roll_i = v[4];
+      pid_roll_d = v[5];
+    }
+  } else if (strncmp(line, "YAW:", 4) == 0) {
+    float y[3];
+    if (sscanf(&line[4], "%f,%f,%f", &y[0], &y[1], &y[2]) == 3) {
+      pid_yaw_p = y[0];
+      pid_yaw_i = y[1];
+      pid_yaw_d = y[2];
+    }
+  } else if (strncmp(line, "DIR:", 4) == 0) {
+    int p, r, y;
+    if (sscanf(&line[4], "%d,%d,%d", &p, &r, &y) == 3) {
+      if (p > 100)
+        p = 100;
+      if (p < -100)
+        p = -100;
+      if (r > 100)
+        r = 100;
+      if (r < -100)
+        r = -100;
+      if (y > 1)
+        y = 1;
+      if (y < -1)
+        y = -1;
+      sp_pitch = DIR_PITCH_SIGN * ((float)p / 100.0f) * DIR_TILT_DEG;
+      sp_roll = DIR_ROLL_SIGN * ((float)r / 100.0f) * DIR_TILT_DEG;
+      sp_yaw_rate = DIR_YAW_SIGN * (float)y * DIR_YAW_RATE_DPS;
+      dir_last_tick = HAL_GetTick();
+    }
+  } else if (strncmp(line, "TRIM:", 5) == 0) {
+    float k[4];
+    if (sscanf(&line[5], "%f,%f,%f,%f", &k[0], &k[1], &k[2], &k[3]) == 4) {
+      for (int i = 0; i < 4; i++) {
+        if (k[i] < TRIM_MIN)
+          k[i] = TRIM_MIN;
+        if (k[i] > TRIM_MAX)
+          k[i] = TRIM_MAX;
+        motor_trim[i] = k[i];
+      }
+    }
+  }
 }
 
 /**
  * @brief Computazione PID e Miscelazione base motori (X-Configuration)
  */
 void PID_ComputeAndMix(void) {
-  // Safety check
-  if (!motors_enabled || current_throttle < TAKEOFF_COMP_THROTTLE) {
+  // Safety check. Se motori disarmati O throttle basso: motori a 1000 us.
+  // (prima in questo caso i motori restavano all'ultimo valore scritto!)
+  if (!motors_enabled || current_throttle < 1050) {
     integral_pitch = 0;
     integral_roll = 0;
-    takeoff_comp_started = 0; // al prossimo stacco il timer riparte
-    takeoff_comp_active = 0;
-
-    // Porta sempre i motori al minimo quando il controllo non e' attivo.
+    integral_yaw = 0;
+    prev_gyro_rate_yaw = gyro_rate_yaw;
+    yaw_d_filt = 0;
     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1000);
     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 1000);
     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, 1000);
@@ -628,19 +502,9 @@ void PID_ComputeAndMix(void) {
     return;
   }
 
-  // Timer compensazione: parte alla prima iterazione con throttle >= soglia
-  // (qui ci arriviamo solo se current_throttle >= TAKEOFF_COMP_THROTTLE)
-  uint32_t now_tick = HAL_GetTick();
-  if (!takeoff_comp_started) {
-    takeoff_comp_started = 1;
-    takeoff_comp_start_tick = now_tick;
-  }
-  takeoff_comp_active =
-      ((now_tick - takeoff_comp_start_tick) < takeoff_comp_duration_ms);
-
-  // Setpoint 0 per hovering
-  error_pitch = 0 - pitch;
-  error_roll = 0 - roll;
+  // Setpoint: 0 per hovering, oppure inclinazione fissa da comando web
+  error_pitch = sp_pitch - pitch;
+  error_roll = sp_roll - roll;
 
   // Componente Integrale
   integral_pitch += error_pitch * dt_actual;
@@ -657,25 +521,54 @@ void PID_ComputeAndMix(void) {
   float pid_roll_out = (pid_roll_p * error_roll) +
                        (pid_roll_i * integral_roll) + (pid_roll_d * deriv_roll);
 
+  // ---------------- YAW ----------------
+  // Il MPU6050 non ha magnetometro: lo yaw e' controllato sulla velocita'
+  // angolare (gyro Z), setpoint 0 deg/s (o velocita' da comando web).
+  // L'integrale dell'errore di velocita' equivale a un "heading hold" a
+  // breve termine (deriva lenta del gyro).
+  error_yaw = sp_yaw_rate - gyro_rate_yaw;
+
+  integral_yaw += error_yaw * dt_actual;
+  if (integral_yaw > YAW_I_MAX)
+    integral_yaw = YAW_I_MAX;
+  if (integral_yaw < -YAW_I_MAX)
+    integral_yaw = -YAW_I_MAX;
+
+  // Derivata dell'errore = -(variazione della velocita' angolare), filtrata
+  float rate_d = (gyro_rate_yaw - prev_gyro_rate_yaw) / dt_actual;
+  prev_gyro_rate_yaw = gyro_rate_yaw;
+  yaw_d_filt = YAW_D_LPF * rate_d + (1.0f - YAW_D_LPF) * yaw_d_filt;
+  float deriv_yaw = -yaw_d_filt;
+
+  float pid_yaw_out = (pid_yaw_p * error_yaw) + (pid_yaw_i * integral_yaw) +
+                      (pid_yaw_d * deriv_yaw);
+  if (pid_yaw_out > YAW_OUT_MAX)
+    pid_yaw_out = YAW_OUT_MAX;
+  if (pid_yaw_out < -YAW_OUT_MAX)
+    pid_yaw_out = -YAW_OUT_MAX;
+
+  float yaw_mix = YAW_MIX_SIGN * pid_yaw_out;
+
+  // TRIM: il moltiplicatore agisce sulla parte di throttle sopra il minimo
+  // (1000 us), quindi il motore debole riceve piu' spinta in proporzione.
+  float thr_above = (float)current_throttle - 1000.0f;
+  float t1 = 1000.0f + thr_above * motor_trim[0]; // Front Left
+  float t2 = 1000.0f + thr_above * motor_trim[1]; // Front Right
+  float t3 = 1000.0f + thr_above * motor_trim[2]; // Back Right
+  float t4 = 1000.0f + thr_above * motor_trim[3]; // Back Left
+
   // Motor Mixing X-Config (adattare i segni a seconda dell'orientamento
-  // dell'IMU)
-  float f1 = current_throttle + pid_pitch_out + pid_roll_out; // Front Left
-  float f2 = current_throttle + pid_pitch_out - pid_roll_out; // Front Right
-  float f3 = current_throttle - pid_pitch_out - pid_roll_out; // Back Right
-  float f4 = current_throttle - pid_pitch_out + pid_roll_out; // Back Left
-
-  // Moltiplicatore PWM per motore (solo nei primi secondi di volo)
-  if (takeoff_comp_active) {
-    f1 *= takeoff_gain[0];
-    f2 *= takeoff_gain[1];
-    f3 *= takeoff_gain[2];
-    f4 *= takeoff_gain[3];
-  }
-
-  int16_t m1 = (int16_t)f1;
-  int16_t m2 = (int16_t)f2;
-  int16_t m3 = (int16_t)f3;
-  int16_t m4 = (int16_t)f4;
+  // dell'IMU). Yaw: le due diagonali (M1+M3 e M2+M4) girano in versi opposti,
+  // quindi la correzione yaw si somma su una diagonale e si sottrae
+  // sull'altra.
+  int16_t m1 =
+      (int16_t)(t1 + pid_pitch_out + pid_roll_out + yaw_mix); // Front Left
+  int16_t m2 =
+      (int16_t)(t2 + pid_pitch_out - pid_roll_out - yaw_mix); // Front Right
+  int16_t m3 =
+      (int16_t)(t3 - pid_pitch_out - pid_roll_out + yaw_mix); // Back Right
+  int16_t m4 =
+      (int16_t)(t4 - pid_pitch_out + pid_roll_out - yaw_mix); // Back Left
 
   // Saturazione segnali (Anti-Windup Meccanico)
   m1 = (m1 > 2000) ? 2000 : (m1 < 1000 ? 1000 : m1);
@@ -683,27 +576,65 @@ void PID_ComputeAndMix(void) {
   m3 = (m3 > 2000) ? 2000 : (m3 < 1000 ? 1000 : m3);
   m4 = (m4 > 2000) ? 2000 : (m4 < 1000 ? 1000 : m4);
 
-  // Applicazione al registro PWM
-  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, m1);
-  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, m2);
-  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, m3);
-  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, m4);
+  // Applicazione al registro PWM, protetta: se un EMERGENCY STOP arriva (ISR)
+  // mentre stavamo calcolando, NON deve essere sovrascritto con valori vecchi.
+  __disable_irq();
+  if (motors_enabled) {
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, m1);
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, m2);
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, m3);
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, m4);
+  }
+  __enable_irq();
 }
 
 /**
  * @brief Callback Interrupt UART RX
+ *        Stop/emergency ("CMD:s" / "CMD:e") vengono eseguiti QUI, subito,
+ *        senza aspettare il main loop. Gli altri comandi vanno in coda.
  */
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
   if (huart->Instance == USART2) {
-    if (esp32_rx_byte == '\n') {
-      rx_buffer[rx_index] = '\0';
-      packet_ready = 1;
-    } else if (esp32_rx_byte != '\r') {
-      if (rx_index < (sizeof(rx_buffer) - 1)) {
-        rx_buffer[rx_index++] = esp32_rx_byte;
+    char c = (char)esp32_rx_byte;
+
+    if (c == '\n') {
+      rx_line[rx_index] = '\0';
+      rx_index = 0;
+
+      if (rx_overflow) {
+        rx_overflow = 0; // riga troppo lunga: scartata
+      } else if (strstr(rx_line, "CMD:e") != NULL ||
+                 strstr(rx_line, "CMD:s") != NULL) {
+        Motors_Kill();
+      } else {
+        uint8_t next = (rx_q_head + 1) % RX_QUEUE_LEN;
+        if (next != rx_q_tail) { // se la coda e' piena scarta
+          strcpy(rx_queue[rx_q_head], rx_line);
+          rx_q_head = next;
+        }
+      }
+    } else if (c != '\r') {
+      if (rx_index < (RX_LINE_LEN - 1)) {
+        rx_line[rx_index++] = c;
+      } else {
+        rx_overflow = 1;
       }
     }
     HAL_UART_Receive_IT(&huart2, &esp32_rx_byte, 1);
+  }
+}
+
+/**
+ * @brief Errori UART (overrun, framing...): senza questo la ricezione si
+ *        ferma e l'emergency stop non arriverebbe piu'.
+ */
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart) {
+  if (huart->Instance == USART2) {
+    __HAL_UART_CLEAR_FLAG(huart, UART_CLEAR_OREF | UART_CLEAR_NEF |
+                                     UART_CLEAR_PEF | UART_CLEAR_FEF);
+    rx_index = 0;
+    rx_overflow = 0;
+    HAL_UART_Receive_IT(huart, &esp32_rx_byte, 1);
   }
 }
 
