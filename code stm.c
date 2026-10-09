@@ -28,7 +28,7 @@
 
 // Costanti Matematiche e di Sistema
 #define RAD_TO_DEG 57.2957795131f
-#define LPF_ALPHA                                                              \
+#define LPF_ALPHA                                                              
   0.1f // Fattore filtro Passa-Basso (aumentato per ridurre phase lag)
 #define COMP_ALPHA 0.999f // Fattore filtro Complementare
 #define GYRO_SCALE 65.5f  // Scala giroscopio per +/- 500 deg/s
@@ -278,6 +278,7 @@ void MPU6050_Init(void) {
 
   // Verifica presenza MPU6050 controllando il registro WHO_AM_I (0x75)
   HAL_I2C_Mem_Read(&hi2c1, MPU6050_ADDR, 0x75, 1, &check, 1, 1000);
+  // firma HAL_I2C_Mem_Read: HAL_StatusTypeDef HAL_I2C_Mem_Read(I2C_HandleTypeDef *hi2c, uint16_t DevAddress, uint16_t MemAddress, uint16_t MemAddSize, uint8_t *pData, uint16_t Size, uint32_t Timeout)
 
   if (check == 104) { // 104 = 0x68 (Default per MPU6050)
     // 1. Risveglio MPU6050
@@ -845,7 +846,6 @@ void MPU_Config(void) {
   MPU_Region_InitTypeDef MPU_InitStruct = {0};
 
   HAL_MPU_Disable();
-
   MPU_InitStruct.Enable = MPU_REGION_ENABLE;
   MPU_InitStruct.Number = MPU_REGION_NUMBER0;
   MPU_InitStruct.BaseAddress = 0x0;

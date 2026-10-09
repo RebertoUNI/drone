@@ -11,7 +11,7 @@ const char *AP_PASS = "DaniGay7";
 
 // Spegnimento automatico: l'STM32 spegne a 8000 ms.
 // L'ESP32 e' un backup ridondante, scatta poco dopo.
-#define ESP_MOTOR_TIMEOUT_MS 8500
+uint32_t espMotorTimeoutMs = 45000;
 
 // Limiti trim motori (devono coincidere con TRIM_MIN / TRIM_MAX dell'STM32)
 #define TRIM_MIN 0.80f
@@ -34,6 +34,7 @@ String current_pid_yaw_i = "";
 String current_pid_yaw_d = "";
 String current_trim[4] = {"", "", "", ""}; // vuoti finche' l'STM32 non risponde
 String current_motors = "0";               // stato motori riportato dall'STM32
+String current_battery = "0.00";           // Tensione batteria letta sul pin 34
 
 // Stato lato ESP32 per il watchdog di backup
 bool esp_motors_on = false;
@@ -165,6 +166,13 @@ void handleDir() {
   server.send(400, "text/plain", "Parametri mancanti");
 }
 
+void handleTimeout() {
+  if (server.hasArg("ms")) {
+    espMotorTimeoutMs = server.arg("ms").toInt();
+  }
+  server.send(200, "text/plain", "OK");
+}
+
 // Endpoint JSON con angoli, parametri PID, trim e stato motori.
 void handleTelemetry() {
   String json = "{";
@@ -184,7 +192,9 @@ void handleTelemetry() {
   json += "\"trim_m2\":\"" + current_trim[1] + "\",";
   json += "\"trim_m3\":\"" + current_trim[2] + "\",";
   json += "\"trim_m4\":\"" + current_trim[3] + "\",";
-  json += "\"motors\":\"" + current_motors + "\"";
+  json += "\"motors\":\"" + current_motors + "\",";
+  json += "\"battery\":\"" + current_battery + "\",";
+  json += "\"timeout_ms\":\"" + String(espMotorTimeoutMs) + "\"";
   json += "}";
   server.send(200, "application/json", json);
 }
@@ -212,17 +222,27 @@ void setup() {
   server.on("/pidyaw", HTTP_GET, handlePIDYaw);
   server.on("/trim", HTTP_GET, handleTrim);
   server.on("/dir", HTTP_GET, handleDir);
+  server.on("/timeout", HTTP_GET, handleTimeout);
   server.on("/telemetry", HTTP_GET, handleTelemetry);
 
   server.begin();
 }
 
+unsigned long last_battery_read = 0;
+
 void loop() {
   server.handleClient();
 
+  if (millis() - last_battery_read > 1000) {
+    last_battery_read = millis();
+    float v_out = analogReadMilliVolts(34) / 1000.0;
+    float v_batt = v_out * ((100.0 + 22.0) / 22.0);
+    current_battery = String(v_batt, 2);
+  }
+
   // Watchdog di backup: se i motori risultano accesi da troppo tempo, spegni
   if (esp_motors_on &&
-      (millis() - esp_motor_start_ms >= ESP_MOTOR_TIMEOUT_MS)) {
+      (millis() - esp_motor_start_ms >= espMotorTimeoutMs)) {
     sendKillToStm();
   }
 

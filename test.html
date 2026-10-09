@@ -112,7 +112,6 @@
             transition: all 0.25s ease;
         }
 
-        /* Stato OFF (motori spenti) → pulsante verde "START" */
         .btn-toggle-motor.off {
             background: linear-gradient(135deg, #22c55e, #16a34a);
             color: white;
@@ -124,7 +123,6 @@
             transform: translateY(-1px);
         }
 
-        /* Stato ON (motori accesi) → pulsante rosso "STOP" pulsante */
         .btn-toggle-motor.on {
             background: linear-gradient(135deg, #ef4444, #dc2626);
             color: white;
@@ -237,33 +235,9 @@
             cursor: grabbing;
         }
 
-        input[type=range]::-moz-range-track {
-            height: 8px;
-            background: rgba(15, 20, 28, 0.9);
-            border-radius: 4px;
-            border: 1px solid rgba(30, 41, 59, 0.8);
-            pointer-events: none;
-        }
-
-        input[type=range]::-moz-range-thumb {
-            width: 28px;
-            height: 28px;
-            border-radius: 50%;
-            background: linear-gradient(135deg, var(--accent-blue), #0ea5e9);
-            box-shadow: 0 0 12px rgba(56, 189, 248, 0.6);
-            border: 2px solid #fff;
-            cursor: grab;
-            pointer-events: auto;
-        }
-
         input[type=range]:disabled {
             opacity: 0.3;
             cursor: not-allowed;
-        }
-
-        input[type=range]:disabled::-webkit-slider-thumb {
-            background: #475569;
-            box-shadow: none;
         }
 
         /* Telemetria */
@@ -284,9 +258,7 @@
             font-variant-numeric: tabular-nums;
         }
 
-        /* ============================================================
-       PID TUNING
-       ============================================================ */
+        /* PID TUNING */
         .pid-table {
             width: 100%;
             border-collapse: separate;
@@ -344,22 +316,7 @@
             font-family: ui-monospace, monospace;
             text-align: right;
             font-size: 0.85rem;
-            transition: border-color 0.2s, box-shadow 0.2s;
-            -moz-appearance: textfield;
             min-height: 40px;
-            margin: 0;
-        }
-
-        .pid-table input[type=number]::-webkit-outer-spin-button,
-        .pid-table input[type=number]::-webkit-inner-spin-button {
-            -webkit-appearance: none;
-            margin: 0;
-        }
-
-        .pid-table input[type=number]:focus {
-            border-color: var(--accent-blue);
-            outline: none;
-            box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.15);
         }
 
         .live-pid {
@@ -369,7 +326,7 @@
             white-space: nowrap;
         }
 
-        /* ---------- TRIM MOTORI ---------- */
+        /* TRIM MOTORI */
         .trim-front {
             font-size: 0.65rem;
             color: var(--text-muted);
@@ -413,132 +370,6 @@
             text-align: center;
             font-size: 0.9rem;
             min-height: 40px;
-            margin: 0;
-        }
-
-        .trim-cell input[type=number]:focus {
-            border-color: var(--accent-blue);
-            outline: none;
-            box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.15);
-        }
-
-        /* ---------- DIREZIONE ---------- */
-        /* ---------- JOYSTICK ---------- */
-        .joy-wrap {
-            display: flex;
-            justify-content: center;
-            margin: 4px 0 10px;
-        }
-
-        .joy {
-            position: relative;
-            width: min(220px, 70vw);
-            aspect-ratio: 1 / 1;
-            border-radius: 50%;
-            background: radial-gradient(circle at center, rgba(30, 41, 59, 0.9) 0%, rgba(15, 20, 28, 0.95) 70%);
-            border: 2px solid rgba(56, 189, 248, 0.35);
-            box-shadow: inset 0 0 24px rgba(0, 0, 0, 0.6);
-            touch-action: none;
-            user-select: none;
-            -webkit-user-select: none;
-            -webkit-touch-callout: none;
-            cursor: grab;
-            transition: border-color 0.2s;
-        }
-
-        .joy::before,
-        .joy::after {
-            content: '';
-            position: absolute;
-            background: rgba(148, 163, 184, 0.18);
-            pointer-events: none;
-        }
-
-        .joy::before {
-            left: 50%;
-            top: 8%;
-            bottom: 8%;
-            width: 1px;
-        }
-
-        .joy::after {
-            top: 50%;
-            left: 8%;
-            right: 8%;
-            height: 1px;
-        }
-
-        .joy.active {
-            border-color: var(--accent-blue);
-            cursor: grabbing;
-        }
-
-        .joy-knob {
-            position: absolute;
-            left: 50%;
-            top: 50%;
-            width: 30%;
-            height: 30%;
-            margin: -15% 0 0 -15%;
-            border-radius: 50%;
-            background: linear-gradient(135deg, var(--accent-blue), #0ea5e9);
-            border: 2px solid #fff;
-            box-shadow: 0 0 16px rgba(56, 189, 248, 0.6), 0 2px 8px rgba(0, 0, 0, 0.5);
-            pointer-events: none;
-            will-change: transform;
-        }
-
-        .joy-readout {
-            font-size: 0.7rem;
-            color: var(--text-dim);
-            letter-spacing: 0.08em;
-            font-weight: 700;
-            margin-bottom: 12px;
-        }
-
-        .joy-readout strong {
-            font-family: ui-monospace, Consolas, monospace;
-            font-size: 1rem;
-            color: #fff;
-            display: inline-block;
-            min-width: 3ch;
-            margin: 0 10px 0 4px;
-            font-variant-numeric: tabular-nums;
-        }
-
-        .yaw-row {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 10px;
-            max-width: 280px;
-            margin: 0 auto;
-        }
-
-        .dir-btn {
-            margin: 0;
-            min-height: 64px;
-            font-size: 1.4rem;
-            background: rgba(51, 65, 85, 0.8);
-            touch-action: none;
-            user-select: none;
-            -webkit-user-select: none;
-            -webkit-touch-callout: none;
-        }
-
-        .dir-btn.yaw {
-            color: var(--accent-purple);
-        }
-
-        .dir-btn.active {
-            background: linear-gradient(135deg, var(--accent-blue), #0ea5e9);
-            color: #001;
-            box-shadow: 0 0 16px rgba(56, 189, 248, 0.5);
-        }
-
-        .dir-btn.yaw.active {
-            background: linear-gradient(135deg, var(--accent-purple), #7c3aed);
-            color: #fff;
-            box-shadow: 0 0 16px rgba(167, 139, 250, 0.5);
         }
 
         .card-note {
@@ -549,108 +380,6 @@
             line-height: 1.4;
         }
 
-        @media (max-width: 520px) {
-            .card {
-                padding: 12px 8px;
-            }
-
-            .pid-table {
-                border-spacing: 0 6px;
-            }
-
-            .pid-table thead th {
-                font-size: 0;
-                text-align: center;
-                padding: 2px 2px 8px;
-                letter-spacing: 0;
-            }
-
-            .pid-table thead th:first-child {
-                font-size: 0.7rem;
-                text-align: left;
-                padding-left: 10px;
-                width: 50px;
-            }
-
-            .pid-table thead th:nth-child(2)::after {
-                content: "P";
-                font-size: 0.75rem;
-                font-weight: 800;
-                color: var(--accent-green);
-            }
-
-            .pid-table thead th:nth-child(3)::after {
-                content: "I";
-                font-size: 0.75rem;
-                font-weight: 800;
-                color: var(--accent-amber);
-            }
-
-            .pid-table thead th:nth-child(4)::after {
-                content: "D";
-                font-size: 0.75rem;
-                font-weight: 800;
-                color: var(--accent-purple);
-            }
-
-            .pid-table td {
-                padding: 8px 2px;
-            }
-
-            .pid-table tbody tr td:first-child {
-                padding-left: 10px;
-                padding-right: 4px;
-                font-size: 0.75rem;
-                width: 50px;
-            }
-
-            .pid-table tbody tr td:last-child {
-                padding-right: 8px;
-            }
-
-            .pid-input-group {
-                flex-direction: column;
-                justify-content: center;
-                align-items: center;
-                gap: 4px;
-            }
-
-            .pid-table input[type=number] {
-                width: 100%;
-                max-width: 72px;
-                min-width: 56px;
-                text-align: center;
-                padding: 8px 2px;
-                font-size: 0.8rem;
-                min-height: 36px;
-            }
-
-            .live-pid {
-                width: auto;
-                text-align: center;
-                font-size: 0.58rem;
-                letter-spacing: -0.02em;
-            }
-        }
-
-        @media (max-width: 360px) {
-            .pid-table input[type=number] {
-                font-size: 0.72rem;
-                padding: 7px 1px;
-                min-width: 48px;
-            }
-
-            .live-pid {
-                font-size: 0.52rem;
-            }
-
-            .pid-table thead th:first-child,
-            .pid-table tbody tr td:first-child {
-                width: 42px;
-                padding-left: 6px;
-            }
-        }
-    
         /* ---------- TELECOMANDO ---------- */
         :root {
             --bg: #12171d;
@@ -661,7 +390,8 @@
             --stick: #8fb8c9;
             --armed: #f2a93b;
             --kill: #e5392f;
-            --s: min(44vw, 44vh);
+            /* Ingrandito: ora usa fino al 68% dell'altezza disponibile dello schermo */
+            --s: min(44vw, 68vh);
         }
 
         #remoteView {
@@ -672,14 +402,14 @@
             z-index: 1000;
             display: none;
             grid-template-rows: auto 1fr;
-            padding: max(10px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
-            gap: 10px;
+            padding: max(8px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+            gap: 8px;
             touch-action: none;
             user-select: none;
             -webkit-user-select: none;
             text-align: left;
         }
-        
+
         #remoteView * {
             box-sizing: border-box;
             -webkit-tap-highlight-color: transparent;
@@ -689,20 +419,16 @@
             display: grid;
             grid-template-columns: 1fr auto 1fr;
             align-items: center;
-            gap: 10px;
+            gap: 8px;
         }
 
         #remoteView .status {
             display: flex;
-            flex-direction: column;
-            gap: 4px;
+            align-items: center;
+            gap: 8px;
             font-size: 13px;
             color: var(--dim);
-        }
-        
-        #remoteView .status b {
-            color: var(--text);
-            font-weight: 600;
+            flex-wrap: wrap;
         }
 
         #remoteView .center {
@@ -721,12 +447,12 @@
         }
 
         #remoteView .arm {
-            min-width: 128px;
-            height: 52px;
-            padding: 0 20px;
-            border-radius: 26px;
+            min-width: 120px;
+            height: 48px;
+            padding: 0 16px;
+            border-radius: 24px;
             font-weight: 600;
-            font-size: 16px;
+            font-size: 15px;
             background: var(--panel);
             border: 2px solid var(--line);
             color: var(--text);
@@ -739,21 +465,17 @@
             color: #231705;
         }
 
-        #remoteView .arm:disabled {
-            opacity: .45;
-        }
-
         #remoteView .kill {
             justify-self: end;
-            width: 90px;
-            height: 90px;
+            width: 78px;
+            height: 78px;
             border-radius: 50%;
             background: var(--kill);
             color: #fff;
             font-weight: 700;
-            font-size: 11px;
+            font-size: 10px;
             line-height: 1.2;
-            border: 5px solid #ffd2cf;
+            border: 4px solid #ffd2cf;
             box-shadow: 0 0 0 3px var(--kill);
             padding: 0;
             display: flex;
@@ -776,15 +498,16 @@
             justify-content: space-around;
             align-items: center;
             min-height: 0;
+            flex: 1;
             flex-wrap: nowrap;
-            gap: 10px;
+            gap: 16px;
         }
 
         #remoteView .stick-wrap {
             display: flex;
             flex-direction: column;
             align-items: center;
-            gap: 8px;
+            gap: 6px;
         }
 
         #remoteView .label {
@@ -797,7 +520,7 @@
             position: relative;
             width: var(--s);
             height: var(--s);
-            border-radius: 22px;
+            border-radius: 24px;
             background: var(--panel);
             border: 2px solid var(--line);
             touch-action: none;
@@ -843,12 +566,12 @@
             position: absolute;
             left: 0;
             top: 0;
-            width: 22%;
-            height: 22%;
+            width: 26%;
+            height: 26%;
             border-radius: 50%;
             background: var(--stick);
             border: 3px solid #cfe6ef;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, .45);
+            box-shadow: 0 4px 14px rgba(0, 0, 0, .5);
             transform: translate(-50%, -50%);
             pointer-events: none;
         }
@@ -865,15 +588,6 @@
             color: var(--text);
             min-height: 1.2em;
         }
-
-        
-
-        @media (max-width: 420px) {
-            #remoteView .top {
-                grid-template-columns: 1fr auto;
-            }
-        }
-
     </style>
 </head>
 
@@ -881,169 +595,172 @@
     <div id="mainView">
         <h2>Quadcopter Control Interface</h2>
         <div style="margin-bottom: 16px;">
-            <button class="btn btn-pid" style="background: linear-gradient(135deg, var(--accent-green), #16a34a); color: white; width: auto; padding: 12px 24px; font-size: 1rem;" onclick="showRemote()">&#128187; Apri Telecomando</button>
+            <button class="btn btn-pid"
+                style="background: linear-gradient(135deg, var(--accent-green), #16a34a); color: white; width: auto; padding: 12px 24px; font-size: 1rem;"
+                onclick="showRemote()">&#128187; Apri Telecomando</button>
         </div>
 
-    <div class="card" id="controlCard">
-        <button id="btnToggleMotorMain" class="btn btn-toggle-motor off" onclick="toggleMotor()">ACCENDI MOTORI</button>
-        <button class="btn btn-emergency" onclick="emergencyStop()">STOP EMERGENZA (DISARMA)</button>
+        <div class="card" id="controlCard">
+            <button id="btnToggleMotorMain" class="btn btn-toggle-motor off" onclick="toggleMotor()">ACCENDI
+                MOTORI</button>
+            <button class="btn btn-emergency" onclick="emergencyStop()">STOP EMERGENZA (DISARMA)</button>
 
-        <div class="thr-display">Gas: <strong id="thrDisplayMain" class="disabled">0</strong> <span style="font-size:0.6em;color:var(--text-muted)">/ 255</span></div>
-        <input type="range" id="thrSliderMain" min="0" max="255" value="0" disabled oninput="document.getElementById('thrDisplayMain').innerText = this.value; sendThr(this.value)">
-        <div class="card-note">Assicurati che il gas sia a 0 prima di accendere.</div>
-    </div>
-
-    <div class="card">
-        <h3>Flight Dynamics</h3>
-        <div class="telemetry">
-            <div>Pitch: <br><strong id="pitchVal" style="color: #fbbf24;">0.00</strong>&deg;</div>
-            <div>Roll: <br><strong id="rollVal" style="color: #38bdf8;">0.00</strong>&deg;</div>
-            <div>Yaw rate: <br><strong id="yawRateVal" style="color: #a78bfa;">0.00</strong>&deg;/s</div>
+            <div class="thr-display">Gas: <strong id="thrDisplayMain" class="disabled">0</strong> <span
+                    style="font-size:0.6em;color:var(--text-muted)">/ 255 (2000 &micro;s)</span></div>
+            <input type="range" id="thrSliderMain" min="0" max="255" value="0" disabled
+                oninput="document.getElementById('thrDisplayMain').innerText = this.value; sendThr(this.value)">
+            <div class="card-note">Assicurati che il gas sia a 0 prima di accendere.</div>
         </div>
-    </div>
 
-    <div class="card">
-        <h3>Tuning PID</h3>
-        <table class="pid-table">
-            <thead>
-                <tr>
-                    <th>Asse</th>
-                    <th>Proporzionale (P)</th>
-                    <th>Integrativo (I)</th>
-                    <th>Derivativo (D)</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr>
-                    <td data-label="Asse" style="color: var(--accent-amber);">Pitch</td>
-                    <td data-label="P">
-                        <div class="pid-input-group">
-                            <input type="number" id="p_pitch" step="0.001" value="0.000" inputmode="decimal">
-                            <span class="live-pid">Act: <span id="currentPitchP">0.000</span></span>
-                        </div>
-                    </td>
-                    <td data-label="I">
-                        <div class="pid-input-group">
-                            <input type="number" id="i_pitch" step="0.001" value="0.000" inputmode="decimal">
-                            <span class="live-pid">Act: <span id="currentPitchI">0.000</span></span>
-                        </div>
-                    </td>
-                    <td data-label="D">
-                        <div class="pid-input-group">
-                            <input type="number" id="d_pitch" step="0.001" value="0.000" inputmode="decimal">
-                            <span class="live-pid">Act: <span id="currentPitchD">0.000</span></span>
-                        </div>
-                    </td>
-                </tr>
-                <tr>
-                    <td data-label="Asse" style="color: var(--accent-blue);">Roll</td>
-                    <td data-label="P">
-                        <div class="pid-input-group">
-                            <input type="number" id="p_roll" step="0.001" value="0.000" inputmode="decimal">
-                            <span class="live-pid">Act: <span id="currentRollP">0.000</span></span>
-                        </div>
-                    </td>
-                    <td data-label="I">
-                        <div class="pid-input-group">
-                            <input type="number" id="i_roll" step="0.001" value="0.000" inputmode="decimal">
-                            <span class="live-pid">Act: <span id="currentRollI">0.000</span></span>
-                        </div>
-                    </td>
-                    <td data-label="D">
-                        <div class="pid-input-group">
-                            <input type="number" id="d_roll" step="0.001" value="0.000" inputmode="decimal">
-                            <span class="live-pid">Act: <span id="currentRollD">0.000</span></span>
-                        </div>
-                    </td>
-                </tr>
-            </tbody>
-        </table>
-
-        <button class="btn btn-pid" onclick="sendPid()">Invia Costanti PID</button>
-    </div>
-
-    <!-- ============================================================
-       TUNING PID YAW (controllo su velocita' angolare, gyro Z)
-       ============================================================ -->
-    <div class="card">
-        <h3>Tuning PID Yaw</h3>
-        <table class="pid-table">
-            <thead>
-                <tr>
-                    <th>Asse</th>
-                    <th>Proporzionale (P)</th>
-                    <th>Integrativo (I)</th>
-                    <th>Derivativo (D)</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr>
-                    <td data-label="Asse" style="color: var(--accent-purple);">Yaw</td>
-                    <td data-label="P">
-                        <div class="pid-input-group">
-                            <input type="number" id="p_yaw" step="0.001" value="1.000" inputmode="decimal">
-                            <span class="live-pid">Act: <span id="currentYawP">-</span></span>
-                        </div>
-                    </td>
-                    <td data-label="I">
-                        <div class="pid-input-group">
-                            <input type="number" id="i_yaw" step="0.001" value="0.000" inputmode="decimal">
-                            <span class="live-pid">Act: <span id="currentYawI">-</span></span>
-                        </div>
-                    </td>
-                    <td data-label="D">
-                        <div class="pid-input-group">
-                            <input type="number" id="d_yaw" step="0.001" value="0.000" inputmode="decimal">
-                            <span class="live-pid">Act: <span id="currentYawD">-</span></span>
-                        </div>
-                    </td>
-                </tr>
-            </tbody>
-        </table>
-
-        <button class="btn btn-pid" onclick="sendPidYaw()">Invia Costanti PID Yaw</button>
-    </div>
-
-    <!-- ============================================================
-       TRIM MOTORI (moltiplicatori)
-       ============================================================ -->
-    <div class="card">
-        <h3>Trim Motori</h3>
-        <div class="trim-front">&#9650; Fronte del drone</div>
-        <div class="trim-grid">
-            <div class="trim-cell">
-                <label for="trim3">M3 &middot; Front Left</label>
-                <input type="number" id="trim3" step="0.005" min="0.8" max="1.2" value="1.170" inputmode="decimal">
-                <span class="live-pid">Act: <span id="currentTrim3">-</span></span>
-            </div>
-            <div class="trim-cell">
-                <label for="trim4">M4 &middot; Front Right</label>
-                <input type="number" id="trim4" step="0.005" min="0.8" max="1.2" value="1.080" inputmode="decimal">
-                <span class="live-pid">Act: <span id="currentTrim4">-</span></span>
-            </div>
-            <div class="trim-cell">
-                <label for="trim2">M2 &middot; Back Left</label>
-                <input type="number" id="trim2" step="0.005" min="0.8" max="1.2" value="1.060" inputmode="decimal">
-                <span class="live-pid">Act: <span id="currentTrim2">-</span></span>
-            </div>
-            <div class="trim-cell">
-                <label for="trim1">M1 &middot; Back Right</label>
-                <input type="number" id="trim1" step="0.005" min="0.8" max="1.2" value="0.900" inputmode="decimal">
-                <span class="live-pid">Act: <span id="currentTrim1">-</span></span>
+        <div class="card">
+            <h3>Flight Dynamics</h3>
+            <div class="telemetry">
+                <div>Pitch: <br><strong id="pitchVal" style="color: #fbbf24;">0.00</strong>&deg;</div>
+                <div>Roll: <br><strong id="rollVal" style="color: #38bdf8;">0.00</strong>&deg;</div>
+                <div>Yaw rate: <br><strong id="yawRateVal" style="color: #a78bfa;">0.00</strong>&deg;/s</div>
+                <div>Battery: <br><strong id="batteryVal" style="color: #22c55e;">0.00</strong>V</div>
             </div>
         </div>
-        <button class="btn btn-pid" onclick="sendTrim()">Invia Trim</button>
-        <button class="btn btn-secondary" onclick="resetTrim()">Reset ai valori di default</button>
-    </div>
 
+        <div class="card">
+            <h3>Tuning PID</h3>
+            <table class="pid-table">
+                <thead>
+                    <tr>
+                        <th>Asse</th>
+                        <th>Proporzionale (P)</th>
+                        <th>Integrativo (I)</th>
+                        <th>Derivativo (D)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td style="color: var(--accent-amber);">Pitch</td>
+                        <td>
+                            <div class="pid-input-group"><input type="number" id="p_pitch" step="0.001" value="0.000"
+                                    inputmode="decimal"><span class="live-pid">Act: <span
+                                        id="currentPitchP">0.000</span></span></div>
+                        </td>
+                        <td>
+                            <div class="pid-input-group"><input type="number" id="i_pitch" step="0.001" value="0.000"
+                                    inputmode="decimal"><span class="live-pid">Act: <span
+                                        id="currentPitchI">0.000</span></span></div>
+                        </td>
+                        <td>
+                            <div class="pid-input-group"><input type="number" id="d_pitch" step="0.001" value="0.000"
+                                    inputmode="decimal"><span class="live-pid">Act: <span
+                                        id="currentPitchD">0.000</span></span></div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="color: var(--accent-blue);">Roll</td>
+                        <td>
+                            <div class="pid-input-group"><input type="number" id="p_roll" step="0.001" value="0.000"
+                                    inputmode="decimal"><span class="live-pid">Act: <span
+                                        id="currentRollP">0.000</span></span></div>
+                        </td>
+                        <td>
+                            <div class="pid-input-group"><input type="number" id="i_roll" step="0.001" value="0.000"
+                                    inputmode="decimal"><span class="live-pid">Act: <span
+                                        id="currentRollI">0.000</span></span></div>
+                        </td>
+                        <td>
+                            <div class="pid-input-group"><input type="number" id="d_roll" step="0.001" value="0.000"
+                                    inputmode="decimal"><span class="live-pid">Act: <span
+                                        id="currentRollD">0.000</span></span></div>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+            <button class="btn btn-pid" onclick="sendPid()">Invia Costanti PID</button>
+        </div>
 
+        <div class="card">
+            <h3>Tuning PID Yaw</h3>
+            <table class="pid-table">
+                <thead>
+                    <tr>
+                        <th>Asse</th>
+                        <th>Proporzionale (P)</th>
+                        <th>Integrativo (I)</th>
+                        <th>Derivativo (D)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td style="color: var(--accent-purple);">Yaw</td>
+                        <td>
+                            <div class="pid-input-group"><input type="number" id="p_yaw" step="0.001" value="1.000"
+                                    inputmode="decimal"><span class="live-pid">Act: <span
+                                        id="currentYawP">-</span></span></div>
+                        </td>
+                        <td>
+                            <div class="pid-input-group"><input type="number" id="i_yaw" step="0.001" value="0.000"
+                                    inputmode="decimal"><span class="live-pid">Act: <span
+                                        id="currentYawI">-</span></span></div>
+                        </td>
+                        <td>
+                            <div class="pid-input-group"><input type="number" id="d_yaw" step="0.001" value="0.000"
+                                    inputmode="decimal"><span class="live-pid">Act: <span
+                                        id="currentYawD">-</span></span></div>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+            <button class="btn btn-pid" onclick="sendPidYaw()">Invia Costanti PID Yaw</button>
+        </div>
+
+        <div class="card">
+            <h3>Trim Motori</h3>
+            <div class="trim-front">&#9650; Fronte del drone</div>
+            <div class="trim-grid">
+                <div class="trim-cell">
+                    <label for="trim3">M3 &middot; Front Left</label>
+                    <input type="number" id="trim3" step="0.005" min="0.8" max="1.2" value="1.170" inputmode="decimal">
+                    <span class="live-pid">Act: <span id="currentTrim3">-</span></span>
+                </div>
+                <div class="trim-cell">
+                    <label for="trim4">M4 &middot; Front Right</label>
+                    <input type="number" id="trim4" step="0.005" min="0.8" max="1.2" value="1.080" inputmode="decimal">
+                    <span class="live-pid">Act: <span id="currentTrim4">-</span></span>
+                </div>
+                <div class="trim-cell">
+                    <label for="trim2">M2 &middot; Back Left</label>
+                    <input type="number" id="trim2" step="0.005" min="0.8" max="1.2" value="1.060" inputmode="decimal">
+                    <span class="live-pid">Act: <span id="currentTrim2">-</span></span>
+                </div>
+                <div class="trim-cell">
+                    <label for="trim1">M1 &middot; Back Right</label>
+                    <input type="number" id="trim1" step="0.005" min="0.8" max="1.2" value="0.900" inputmode="decimal">
+                    <span class="live-pid">Act: <span id="currentTrim1">-</span></span>
+                </div>
+            </div>
+            <button class="btn btn-pid" onclick="sendTrim()">Invia Trim</button>
+            <button class="btn btn-secondary" onclick="resetTrim()">Reset ai valori di default</button>
+        </div>
+
+        <div class="card">
+            <h3>Impostazioni di Sicurezza</h3>
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px;">
+                <label style="font-size: 0.85rem; font-weight: 700; color: var(--text-dim);">Timeout Motori (s)</label>
+                <input type="number" id="timeoutSec" step="1" min="5" max="300" value="45" style="width: 80px; background: rgba(11, 15, 23, 0.9); border: 1px solid rgba(51, 65, 85, 0.8); color: #fff; padding: 10px; border-radius: 6px; font-family: ui-monospace, monospace; text-align: right; font-size: 0.85rem;">
+            </div>
+            <button class="btn btn-pid" onclick="sendTimeout()" style="background: linear-gradient(135deg, var(--accent-red), #b91c1c); box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);">Aggiorna Timeout</button>
+            <div class="card-note">Valore attuale sul drone: <strong style="color:#fff;" id="currentTimeout">45.0</strong>s</div>
+        </div>
     </div> <!-- end mainView -->
 
     <div id="remoteView" class="app">
         <div class="top">
             <div class="status">
-                <button class="btn btn-secondary" onclick="showMain()" style="width: auto; padding: 6px 12px; margin: 0; border-radius: 20px; font-size: 12px;">&larr; Indietro</button>
-                <span id="stateTxt" style="margin-top: 8px;">Motori spenti</span>
+                <button class="btn btn-secondary" onclick="showMain()"
+                    style="width: auto; padding: 6px 12px; margin: 0; border-radius: 20px; font-size: 12px;">&larr;
+                    Indietro</button>
+                <button class="btn btn-secondary" id="fsBtn" onclick="toggleFullscreen()"
+                    style="width: auto; padding: 6px 12px; margin: 0; border-radius: 20px; font-size: 12px;">&#x26F6;
+                    Schermo intero</button>
+                <span id="stateTxt">Motori spenti</span>
+                <span style="font-weight: 600; color: #22c55e;">Bat: <span id="remoteBatteryVal">0.00</span>V</span>
             </div>
             <div class="center">
                 <button class="arm" id="armBtn">Accendi</button>
@@ -1073,19 +790,37 @@
         </div>
     </div>
 
-    
-
     <script>
-        /* ============================================================
-           STATO MOTORI
-           ============================================================ */
         let motorOn = false;
         let motorStartedAt = 0;
         let trimSynced = false;
         let yawSynced = false;
-
-        // Trim di default (modificabili dall'interfaccia): M1, M2, M3, M4
+        const THR_MAX = 120;
         const TRIM_DEFAULTS = [0.900, 1.060, 1.170, 1.080];
+
+        /* ============================================================
+           FULLSCREEN TOGGLE
+           ============================================================ */
+        function toggleFullscreen() {
+            const fsBtn = document.getElementById("fsBtn");
+            const doc = document.documentElement;
+
+            if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+                if (doc.requestFullscreen) {
+                    doc.requestFullscreen().catch(err => console.log(err));
+                } else if (doc.webkitRequestFullscreen) {
+                    doc.webkitRequestFullscreen();
+                }
+                if (fsBtn) fsBtn.innerHTML = "&#x2716; Esci intero";
+            } else {
+                if (document.exitFullscreen) {
+                    document.exitFullscreen().catch(err => console.log(err));
+                } else if (document.webkitExitFullscreen) {
+                    document.webkitExitFullscreen();
+                }
+                if (fsBtn) fsBtn.innerHTML = "&#x26F6; Schermo intero";
+            }
+        }
 
         /* ============================================================
            VIEW TOGGLE
@@ -1093,18 +828,20 @@
         function showRemote() {
             document.getElementById('mainView').style.display = 'none';
             document.getElementById('remoteView').style.display = 'grid';
-            
+            // Tentativo automatico di fullscreen al click (richiede gesto utente)
+            toggleFullscreen();
         }
 
-                function showMain() {
+        function showMain() {
             if (motorOn) {
                 stopMotor();
+            }
+            if (document.fullscreenElement || document.webkitFullscreenElement) {
+                toggleFullscreen();
             }
             document.getElementById('remoteView').style.display = 'none';
             document.getElementById('mainView').style.display = 'block';
         }
-
-        
 
         /* ============================================================
            TELECOMANDO STICKS LOGIC
@@ -1113,24 +850,37 @@
         function makeStick(el, { springX, springY, onChange }) {
             const knob = el.querySelector(".knob");
             let id = null, x = 0, y = 0;
+            let startTx = 0, startTy = 0;
+            let startKx = 0, startKy = 0;
 
             function draw() {
-                knob.style.left = (50 + x * 39) + "%";
-                knob.style.top = (50 - y * 39) + "%";
+                knob.style.left = (50 + x * 37) + "%";
+                knob.style.top = (50 - y * 37) + "%";
             }
-            function move(e) {
+            function getPos(e) {
                 const r = el.getBoundingClientRect();
-                const nx = ((e.clientX - r.left) / r.width - 0.5) / 0.39;
-                const ny = -((e.clientY - r.top) / r.height - 0.5) / 0.39;
-                x = Math.max(-1, Math.min(1, nx));
-                y = Math.max(-1, Math.min(1, ny));
-                draw(); onChange(x, y);
+                return {
+                    nx: ((e.clientX - r.left) / r.width - 0.5) / 0.37,
+                    ny: -((e.clientY - r.top) / r.height - 0.5) / 0.37
+                };
             }
             el.addEventListener("pointerdown", e => {
                 if (el.classList.contains("disabled") || id !== null) return;
-                id = e.pointerId; el.setPointerCapture(id); move(e);
+                id = e.pointerId; el.setPointerCapture(id);
+                const pos = getPos(e);
+                startTx = pos.nx;
+                startTy = pos.ny;
+                startKx = x;
+                startKy = y;
             });
-            el.addEventListener("pointermove", e => { if (e.pointerId === id) move(e); });
+            el.addEventListener("pointermove", e => {
+                if (e.pointerId === id) {
+                    const pos = getPos(e);
+                    x = Math.max(-1, Math.min(1, startKx + (pos.nx - startTx)));
+                    y = Math.max(-1, Math.min(1, startKy + (pos.ny - startTy)));
+                    draw(); onChange(x, y);
+                }
+            });
             const end = e => {
                 if (e.pointerId !== id) return;
                 id = null;
@@ -1149,11 +899,11 @@
             leftStick = makeStick(document.getElementById("padL"), {
                 springX: true, springY: false,
                 onChange(x, y) {
-                    const t = (y + 1) / 2; // 0..1
-                    const t_val = Math.round(t * 255);
+                    const t = (y + 1) / 2;
+                    const t_val = Math.round(t * THR_MAX);
                     let y_val = 0;
-                    if (x > 0.3) y_val = 1;
-                    else if (x < -0.3) y_val = -1;
+                    if (x > 0.3) y_val = -1;
+                    else if (x < -0.3) y_val = 1;
 
                     document.getElementById("padL").querySelector(".ticks").style.setProperty("--fill", pct(t));
                     document.getElementById("roL").textContent = "Gas " + pct(t) + " · Imb " + y_val;
@@ -1212,8 +962,8 @@
             });
         });
 
-                function throttleToZero() { 
-            if(leftStick) leftStick.reset(true); 
+        function throttleToZero() {
+            if (leftStick) leftStick.reset(true);
             const slider = document.getElementById('thrSliderMain');
             if (slider) {
                 slider.value = 0;
@@ -1224,10 +974,9 @@
         function lockSticks(locked) {
             const padL = document.getElementById('padL');
             const padR = document.getElementById('padR');
-            if(padL) padL.classList.toggle("disabled", locked);
-            if(padR) padR.classList.toggle("disabled", locked);
+            if (padL) padL.classList.toggle("disabled", locked);
+            if (padR) padR.classList.toggle("disabled", locked);
         }
-
 
         function setMotorUI(on) {
             motorOn = on;
@@ -1246,19 +995,15 @@
                 btnMain.classList.toggle('on', on);
                 btnMain.innerHTML = on ? "STOP MOTORI" : "ACCENDI MOTORI";
             }
-            if (thrSliderMain) {
-                thrSliderMain.disabled = !on;
-            }
-            if (thrDisplayMain) {
-                thrDisplayMain.classList.toggle('disabled', !on);
-            }
-            
+            if (thrSliderMain) thrSliderMain.disabled = !on;
+            if (thrDisplayMain) thrDisplayMain.classList.toggle('disabled', !on);
+
             const stateTxt = document.getElementById('stateTxt');
             if (stateTxt) stateTxt.textContent = on ? "Motori accesi" : "Motori spenti";
 
             if (!on) {
                 throttleToZero();
-                if(rightStick) rightStick.reset();
+                if (rightStick) rightStick.reset();
                 clearDir();
             }
         }
@@ -1272,8 +1017,6 @@
             if (motorOn) stopMotor(); else startMotor();
         }
 
-        // Si parte SEMPRE da throttle 0: i motori non possono partire
-        // di colpo con un valore rimasto sullo slider.
         function startMotor() {
             resetThrottleUI();
             setMotorUI(true);
@@ -1287,12 +1030,6 @@
             fetch('/cmd?action=s').catch(console.error);
         }
 
-        /* ============================================================
-           EMERGENCY STOP
-           Endpoint dedicato /estop (l'ESP32 inoltra "CMD:e" 3 volte +
-           throttle 0). Inviato 3 volte a distanza ravvicinata per
-           resistere a una richiesta persa.
-           ============================================================ */
         function emergencyStop() {
             setMotorUI(false);
             resetThrottleUI();
@@ -1302,16 +1039,10 @@
             setTimeout(send, 400);
         }
 
-        /* ============================================================
-           THROTTLE (una sola richiesta in volo, sempre l'ultimo valore)
-           Evita di accodare decine di richieste mentre si trascina lo
-           slider, che ritarderebbero un eventuale stop.
-           ============================================================ */
         let thrInFlight = false;
         let thrPending = null;
 
         function sendThr(val) {
-            
             if (!motorOn) return;
             thrPending = val;
             flushThr();
@@ -1327,13 +1058,6 @@
                 .finally(() => { thrInFlight = false; flushThr(); });
         }
 
-        /* ============================================================
-           DIREZIONE (inclinazione fissa finche' il tasto e' premuto)
-           p: -100..+100 (+ avanti)   r: -100..+100 (+ destra)
-           y: -1 / 0 / +1 (+ orario)  [yaw resta a pulsanti]
-           Una sola richiesta in volo + rinvio ogni 100 ms come "keep-alive":
-           se i pacchetti si interrompono, l'STM32 torna in piano da solo.
-           ============================================================ */
         const dir = { p: 0, r: 0, y: 0 };
         let dirInFlight = false;
         let dirDirty = false;
@@ -1354,22 +1078,17 @@
             flushDir();
         }
 
-        // Azzera solo lato pagina (usato su STOP/EMERGENCY: non ritarda lo stop,
-        // l'STM32 azzera comunque i setpoint in Motors_Kill)
         function clearDir() {
             dir.p = dir.r = dir.y = 0;
             dirDirty = false;
             document.querySelectorAll('.dir-btn.active').forEach(b => b.classList.remove('active'));
-            
         }
 
         setInterval(() => {
             if (dir.p || dir.r || dir.y) { dirDirty = true; flushDir(); }
         }, 100);
 
-        
-
-                function setStick(p, r) {
+        function setStick(p, r) {
             if (dir.p === p && dir.r === r) return;
             dir.p = p;
             dir.r = r;
@@ -1377,17 +1096,16 @@
             flushDir();
         }
 
-        // Tastiera (PC): frecce = pitch/roll, Q/E = yaw
         const KEYMAP = {
             ArrowUp: ['p', 100], ArrowDown: ['p', -100],
             ArrowLeft: ['r', -100], ArrowRight: ['r', 100],
-            KeyQ: ['y', -1], KeyE: ['y', 1]
+            KeyQ: ['y', 1], KeyE: ['y', -1]
         };
         document.addEventListener('keydown', e => {
-            if (e.target.type === 'number') return;   // non rubare le frecce ai campi PID/trim
+            if (e.target.type === 'number') return;
             const k = KEYMAP[e.code];
             if (!k) return;
-            e.preventDefault();                        // evita che le frecce muovano lo slider throttle
+            e.preventDefault();
             setDir(k[0], k[1]);
         });
         document.addEventListener('keyup', e => {
@@ -1396,14 +1114,10 @@
         });
         window.addEventListener('blur', () => { clearDir(); dirDirty = true; flushDir(); });
 
-        /* ============================================================
-           PID
-           ============================================================ */
         function sendPid() {
             const pp = document.getElementById('p_pitch').value;
             const ip = document.getElementById('i_pitch').value;
             const dp = document.getElementById('d_pitch').value;
-
             const pr = document.getElementById('p_roll').value;
             const ir = document.getElementById('i_roll').value;
             const dr = document.getElementById('d_roll').value;
@@ -1412,9 +1126,6 @@
                 .catch(console.error);
         }
 
-        /* ============================================================
-           PID YAW (inviato separatamente: non tocca pitch/roll)
-           ============================================================ */
         function sendPidYaw() {
             const yp = parseFloat(document.getElementById('p_yaw').value);
             const yi = parseFloat(document.getElementById('i_yaw').value);
@@ -1434,9 +1145,6 @@
             }
         }
 
-        /* ============================================================
-           TRIM MOTORI (moltiplicatori 0.800 - 1.200)
-           ============================================================ */
         function sendTrim() {
             const v = [1, 2, 3, 4].map(i => parseFloat(document.getElementById('trim' + i).value));
             if (v.some(x => !Number.isFinite(x) || x < 0.8 || x > 1.2)) {
@@ -1452,12 +1160,18 @@
             sendTrim();
         }
 
-        /* ============================================================
-           POLLING TELEMETRIA
-           ============================================================ */
+        function sendTimeout() {
+            const t = parseFloat(document.getElementById('timeoutSec').value);
+            if (!Number.isFinite(t) || t < 5) {
+                alert('Inserisci un timeout valido in secondi (min 5)');
+                return;
+            }
+            fetch('/timeout?ms=' + Math.floor(t * 1000)).catch(console.error);
+        }
+
         let telBusy = false;
         setInterval(() => {
-            if (telBusy) return;   // niente richieste accumulate
+            if (telBusy) return;
             telBusy = true;
             const ctl = new AbortController();
             const to = setTimeout(() => ctl.abort(), 1000);
@@ -1469,6 +1183,12 @@
                     if (data.yaw_rate !== undefined && data.yaw_rate !== '') {
                         document.getElementById('yawRateVal').innerText = data.yaw_rate;
                     }
+                    if (data.battery !== undefined) {
+                        const batMain = document.getElementById('batteryVal');
+                        if (batMain) batMain.innerText = data.battery;
+                        const batRemote = document.getElementById('remoteBatteryVal');
+                        if (batRemote) batRemote.innerText = data.battery;
+                    }
                     updateCurrentPid('currentPitchP', data.pid_pitch_p);
                     updateCurrentPid('currentPitchI', data.pid_pitch_i);
                     updateCurrentPid('currentPitchD', data.pid_pitch_d);
@@ -1476,11 +1196,9 @@
                     updateCurrentPid('currentRollI', data.pid_roll_i);
                     updateCurrentPid('currentRollD', data.pid_roll_d);
 
-                    // PID Yaw attuali
                     updateCurrentPid('currentYawP', data.pid_yaw_p);
                     updateCurrentPid('currentYawI', data.pid_yaw_i);
                     updateCurrentPid('currentYawD', data.pid_yaw_d);
-                    // Alla prima telemetria valida, precompila gli input yaw col valore reale
                     if (!yawSynced && data.pid_yaw_p !== undefined && data.pid_yaw_p !== '' &&
                         data.pid_yaw_i !== '' && data.pid_yaw_d !== '') {
                         document.getElementById('p_yaw').value = Number(data.pid_yaw_p).toFixed(3);
@@ -1489,20 +1207,19 @@
                         yawSynced = true;
                     }
 
-                    // Trim attuali
                     for (let i = 1; i <= 4; i++) {
                         updateCurrentPid('currentTrim' + i, data['trim_m' + i]);
                     }
-                    // Alla prima telemetria valida, precompila gli input col valore reale
                     if (!trimSynced && data.trim_m1 !== undefined && data.trim_m1 !== '') {
                         for (let i = 1; i <= 4; i++) {
                             document.getElementById('trim' + i).value = Number(data['trim_m' + i]).toFixed(3);
                         }
                         trimSynced = true;
                     }
+                    if (data.timeout_ms !== undefined) {
+                        document.getElementById('currentTimeout').innerText = (parseInt(data.timeout_ms) / 1000).toFixed(1);
+                    }
 
-                    // Se il firmware ha spento i motori (timeout 8 s o altro),
-                    // allinea l'interfaccia. Ignora telemetria vecchia subito dopo lo START.
                     if (data.motors !== undefined && motorOn &&
                         String(data.motors) === '0' &&
                         Date.now() - motorStartedAt > 1500) {
