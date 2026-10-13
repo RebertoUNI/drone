@@ -96,7 +96,7 @@ volatile uint8_t rx_overflow = 0;
 char rx_queue[RX_QUEUE_LEN][RX_LINE_LEN]; // coda comandi ISR -> main
 volatile uint8_t rx_q_head = 0, rx_q_tail = 0;
 volatile uint32_t link_last_tick = 0; // ultimo heartbeat "HB:" valido ricevuto
-char telemetry_tx_buffer[384];
+char telemetry_tx_buffer[300];
 volatile uint8_t telemetry_tx_busy = 0;
 
 // Stato di sistema - Variabili PID
@@ -183,7 +183,7 @@ int main(void) {
   HAL_Delay(4000); // Attesa completamento boot ESC
 
   // Attiva la ricezione UART in modalità Interrupt
-  HAL_UART_Receive_IT(&huart2, &esp32_rx_byte, 1);
+  HAL_UART_Receive_IT(&huart2, &esp32_rx_byte, 1); // Salva 1 byte in esp32_rx_byte
 
   last_time = HAL_GetTick();
   /* USER CODE END 2 */
@@ -201,20 +201,22 @@ int main(void) {
     }
 
     // WATCHDOG COLLEGAMENTO: nessun heartbeat valido -> spegni i motori.
-    // Cast a int32_t: link_last_tick viene aggiornato in ISR e puo' essere
-    // "piu' nuovo" di current_time (la sottrazione unsigned darebbe un kill falso)
+    // Cast a int32_t: link_last_tick viene aggiornato in ISR quando arriva heartbeat e puo' essere
+    // "piu' nuovo" di current_time. Questo perchè current_time e link_last_tick sono unsigned (e dunque un
+    // numero negativo darebbe un kill perchè diventerebbe enorme)
     if (motors_enabled &&
         ((int32_t)(current_time - link_last_tick) >= LINK_TIMEOUT_MS)) {
       Motors_Kill();
     }
 
-    // Timeout comando direzionale: senza DIR recenti torna in piano
-    if ((sp_pitch != 0.0f || sp_roll != 0.0f || sp_yaw_rate != 0.0f) &&			// Siccome il joystick torna a 0 quando si molla il dito, questa non serve, tecnicmanete si può commentare
-        (current_time - dir_last_tick >= DIR_TIMEOUT_MS)) {
+    /* Timeout comando direzionale: senza DIR recenti torna in piano
+    if ((sp_pitch != 0.0f || sp_roll != 0.0f || sp_yaw_rate != 0.0f) &&			// Siccome il joystick torna a 0 quando si molla il dito, questa non serve, tecnicamente si può commentare
+        (current_time - dir_last_tick >= DIR_TIMEOUT_MS)) {						// Lo usavamo quando il controller era fatto con frecce direzionali in fase di test
       sp_pitch = 0.0f;
       sp_roll = 0.0f;
       sp_yaw_rate = 0.0f;
     }
+	*/
 
     // Se la ricezione UART si fosse fermata (errore), riarmala
     if (huart2.RxState == HAL_UART_STATE_READY) {
@@ -232,12 +234,11 @@ int main(void) {
       // 2. Calcolo errori, computazione PID e miscelazione motori
       PID_ComputeAndMix();
 
-      // 3. Telemetria verso ESP32 (Eseguita ogni 40ms -> 25Hz per evitare
-      // saturazione UART)
-      static uint8_t telemetry_counter = 0;
-      if (++telemetry_counter >= 10) {
-        if (!telemetry_tx_busy) {
-          int len = snprintf(
+      // 3. Telemetria verso ESP32 (Eseguita ogni 40ms -> 25Hz per evitare saturazione UART)
+      static uint8_t telemetry_counter = 0;			// definita static in modo che il suo valore non venga azzerato ad ogni ciclo
+      if (++telemetry_counter >= 10) {				// Entro nell'if solo dopo 10 cicli (40 ms)
+        if (!telemetry_tx_busy) {					// telemetry_tx_busy viene messo a 0 in HAL_UART_TxCpltCallback
+          int len = snprintf(						// Mi torna il numero di caratteri della stringa in telemetry_tx_buffer
               telemetry_tx_buffer, sizeof(telemetry_tx_buffer),
               "ANG:%.2f,%.2f,"
               "yaw_rate:%.2f,"
@@ -266,7 +267,10 @@ int main(void) {
     // ==========================================
     // PARSING DEI COMANDI ESP32 (coda riempita dalla ISR)
     // ==========================================
-    while (rx_q_tail != rx_q_head) {
+
+    // Qui i comandi che arrivano dall'ESP32 (tramite interrupt) vengono "processati" e inseriti in un "buffer locale" che verrà mandata alla funzione Process_Command che eseguirà i comandi
+    // NB i comandi di stop e emergency eseguono Motors_kill direttamente nell'interrupt per evitare che il drone si disattivi in ritardo (anche HeartBeat)
+    while (rx_q_tail != rx_q_head) {						// rx_q_head è una variabile che viene aumentata dall'ISR
       char local_buffer[RX_LINE_LEN];
       strncpy(local_buffer, rx_queue[rx_q_tail], RX_LINE_LEN - 1);
       local_buffer[RX_LINE_LEN - 1] = '\0';
@@ -447,7 +451,7 @@ void Process_Command(char *line) {
         motors_enabled = 1;
       }
     } else if (line[4] == 's' || line[4] == 'e') {
-      Motors_Kill(); // (gia' gestito in ISR, qui per sicurezza)
+      Motors_Kill(); // (gia' gestito in ISR, qui per sicurezza)  é ridondante
     }
   } else if (strncmp(line, "THR:", 4) == 0) {
     int esp32_throttle = atoi(&line[4]);
@@ -620,16 +624,16 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
       } else if (strstr(rx_line, "CMD:e") != NULL ||
                  strstr(rx_line, "CMD:s") != NULL) {
         Motors_Kill();
-      } else if (strncmp(rx_line, "HB:", 3) == 0) {
+      } else if (strncmp(rx_line, "HB:", 3) == 0) {		// torna 0 se c'è corrispondenza
         link_last_tick = HAL_GetTick(); // heartbeat: non va in coda
-      } else {
+      } else {												// Se il messaggio ricevuto non è ne emergency stop, ne stop, ne HeartBeat, esegue else
         uint8_t next = (rx_q_head + 1) % RX_QUEUE_LEN;
         if (next != rx_q_tail) { // se la coda e' piena scarta
           strcpy(rx_queue[rx_q_head], rx_line);
           rx_q_head = next;
         }
       }
-    } else if (c != '\r') {
+    } else if (c != '\r') {				// se il c è diverso dal carriage return (ovvero c è un carattere)
       if (rx_index < (RX_LINE_LEN - 1)) {
         rx_line[rx_index++] = c;
       } else {

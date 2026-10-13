@@ -3,21 +3,23 @@
 #include <WiFi.h>
  
 const char *AP_SSID = "Drone_Test";
-const char *AP_PASS = "DaniGay7";
+const char *AP_PASS = "DaniGay7"; //da cambiare
  
 #define RXD2 16
 #define TXD2 17
 #define NUCLEO_BAUD 115200
  
-// Spegnimento automatico: l'STM32 spegne a 8000 ms.
-// L'ESP32 e' un backup ridondante, scatta poco dopo.
-uint32_t espMotorTimeoutMs = 45000;
+// Spegnimento automatico dei motori se non arriva un comando di stop (es. 45 s)
+uint32_t espMotorTimeoutMs = 45000; // Modificabile da pagina web
  
 // Limiti trim motori (devono coincidere con TRIM_MIN / TRIM_MAX dell'STM32)
-#define TRIM_MIN 0.80f
+// Trim per bilanciare la potenza dei motori (dispersione dei parametri). 
+// Il moltiplicatore agisce sulla parte di throttle sopra il minimo (1000 us), quindi il motore debole riceve piu' spinta in proporzione.
+// Questo serve per compensare le differenze tra i motori, che non sono tutti uguali.
+#define TRIM_MIN 0.80f 
 #define TRIM_MAX 1.20f
  
-WebServer server(80);
+WebServer server(80); //
  
 // Variabili globali per memorizzare telemetria
 String current_pitch = "0.00";
@@ -29,7 +31,7 @@ String current_pid_pitch_d = "0.00";
 String current_pid_roll_p = "1.00";
 String current_pid_roll_i = "0.00";
 String current_pid_roll_d = "0.00";
-String current_pid_yaw_p = ""; // vuoti finche' l'STM32 non risponde
+String current_pid_yaw_p = "";             // vuoti finche' l'STM32 non risponde
 String current_pid_yaw_i = "";
 String current_pid_yaw_d = "";
 String current_trim[4] = {"", "", "", ""}; // vuoti finche' l'STM32 non risponde
@@ -50,16 +52,16 @@ unsigned long last_kill_tx_ms = 0;
  
 bool clientAlive() {
   return WiFi.softAPgetStationNum() > 0 &&
-         (millis() - last_client_ms < CLIENT_TIMEOUT_MS);
+         (millis() - last_client_ms < CLIENT_TIMEOUT_MS);  // Se nessuno è collegato per CLIENT_TIMEOUT_MS, il client e' considerato perso
 }
- 
+
+// Torna il valore del campo "name" nella stringa di telemetria ricevuta dall'STM32. Se non trovato, ritorna stringa vuota.
 String telemetryField(const String &payload, const char *name) {
   String prefix = String(name) + ":";
-  int start = payload.indexOf(prefix);
+  int start = payload.indexOf(prefix); // Cerca "name:" nella stringa payload (indexOf ritorna -1 se non trovato)
   if (start < 0) {
     return "";
-  }
- 
+  } 
   start += prefix.length();
   int end = payload.indexOf(',', start);
   return payload.substring(start, end < 0 ? payload.length() : end);
@@ -282,22 +284,23 @@ void loop() {
   }
  
   // Acquisizione asincrona della stringa telemetrica da STM32
-  if (Serial2.available()) {
+  if (Serial2.available()) { // esempio: "ANG:0.00,0.00,yaw_rate:0.00,pid_pitch_p:3.000,pid_pitch_i:0.700,pid_pitch_d:0.800,pid_roll_p:3.000,pid_roll_i:0.900,pid_roll_d:0.850,pid_yaw_p:1.000,pid_yaw_i:0.800,pid_yaw_d:0.100,trim1:1.000,trim2:1.000,trim3:1.000,trim4:1.000,motors:1"
     String incoming = Serial2.readStringUntil('\n');
     incoming.trim();
     if (incoming.startsWith("ANG:")) {
       last_stm_rx_ms = millis();
-      String payload = incoming.substring(4);
+      String payload = incoming.substring(4); // Rimuove "ANG:" iniziale
       int commaIndex1 = payload.indexOf(',');
       if (commaIndex1 > 0) {
         current_pitch = payload.substring(0, commaIndex1);
         int commaIndex2 = payload.indexOf(',', commaIndex1 + 1);
         if (commaIndex2 > 0) {
           current_roll = payload.substring(commaIndex1 + 1, commaIndex2);
-        } else {
+        } else { // Se il messaggio non ha informazioni su yaw_rate, pid, trim o motori
           current_roll = payload.substring(commaIndex1 + 1);
         }
- 
+        // Ora la stringa payload contiene tutti i campi separati da virgola, ad esempio: "yaw_rate:0.00,pid_pitch_p:3.000,pid_pitch_i:0.700,pid_pitch_d:0.800,pid_roll_p:3.000,pid_roll_i:0.900,pid_roll_d:0.850,pid_yaw_p:1.000,pid_yaw_i:0.800,pid_yaw_d:0.100,trim1:1.000,trim2:1.000,trim3:1.000,trim4:1.000,motors:1"
+        // Estrae il valore del campo "yaw_rate"
         String value = telemetryField(payload, "yaw_rate");
         if (value.length() > 0)
           current_yaw_rate = value;
