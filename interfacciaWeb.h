@@ -1172,6 +1172,29 @@ const char index_html[] PROGMEM = R"rawliteral(
             }
             fetch('/timeout?ms=' + Math.floor(t * 1000)).catch(console.error);
         }
+  
+        /* ---------- HEARTBEAT: se si ferma, il drone si spegne ---------- */
+        let hbBusy = false;
+        setInterval(() => {
+            if (hbBusy) return;
+            hbBusy = true;
+            const ctl = new AbortController();
+            const to = setTimeout(() => ctl.abort(), 400);
+            fetch('/hb', { cache: 'no-store', signal: ctl.signal })
+                .catch(() => { })
+                .finally(() => { clearTimeout(to); hbBusy = false; });
+        }, 100);
+
+        /* ---------- AVVISO COLLEGAMENTO PERSO ---------- */
+        let lastTelOk = Date.now();
+        setInterval(() => {
+            if (motorOn && Date.now() - lastTelOk > 1000) {
+                setMotorUI(false);
+                resetThrottleUI();
+                document.getElementById('stateTxt').textContent =
+                    "COLLEGAMENTO PERSO: motori spenti dal drone";
+            }
+        }, 250);
 
         let telBusy = false;
         setInterval(() => {
@@ -1182,6 +1205,11 @@ const char index_html[] PROGMEM = R"rawliteral(
             fetch('/telemetry', { signal: ctl.signal })
                 .then(response => response.json())
                 .then(data => {
+                    lastTelOk = Date.now();
+                    if (motorOn && data.stm_age !== undefined && parseInt(data.stm_age) > 1000) {
+                        document.getElementById('stateTxt').textContent =
+                            "ATTENZIONE: telemetria H7 assente";
+                    }
                     document.getElementById('pitchVal').innerText = data.pitch;
                     document.getElementById('rollVal').innerText = data.roll;
                     if (data.yaw_rate !== undefined && data.yaw_rate !== '') {

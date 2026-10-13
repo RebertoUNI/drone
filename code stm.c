@@ -24,14 +24,13 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define MPU6050_ADDR 0xD0 // Indirizzo I2C (AD0 a GND)
+#define MPU6050_ADDR 0xD0 // Indirizzo I2C (AD0 a GND) ottenuto partendo da 0x68 shiftando a sinistra i bit e mettendo 0 come LSB
 
 // Costanti Matematiche e di Sistema
 #define RAD_TO_DEG 57.2957795131f
-#define LPF_ALPHA                                                              
-  0.1f // Fattore filtro Passa-Basso (aumentato per ridurre phase lag)
+#define LPF_ALPHA 0.1f // Fattore filtro Passa-Basso per filtrare i valori dell'accelerazione (siccome l'accelerometro è sensibile al rumore ad alta frequenza, tipo vibrazioni)
 #define COMP_ALPHA 0.999f // Fattore filtro Complementare
-#define GYRO_SCALE 65.5f  // Scala giroscopio per +/- 500 deg/s
+#define GYRO_SCALE 65.5f // Scala giroscopio per +/- 500 deg/s
 
 // Mapping giroscopio -> angolo
 #define GYRO_ROLL_SIGN 1.0f  // gyro X -> roll
@@ -47,20 +46,23 @@
 #define YAW_D_LPF 0.2f     // filtro passa-basso sulla derivata yaw (0..1)
 
 // Controllo direzionale da web (inclinazione fissa, non graduale)
-#define DIR_TILT_DEG 5.0f      // inclinazione MASSIMA (joystick a fondo corsa)
-#define DIR_YAW_RATE_DPS 30.0f // velocita' di imbardata in deg/s
-#define DIR_TIMEOUT_MS 400     // se non arrivano DIR, torna in piano
+#define DIR_TILT_DEG 5.0f        // inclinazione MASSIMA (joystick a fondo corsa)
+#define DIR_YAW_RATE_DPS 30.0f   // velocita' di imbardata in deg/s
+#define DIR_TIMEOUT_MS 400       // se non arrivano DIR, torna in piano
 // Se un comando va nel verso sbagliato, metti -1.0f
 #define DIR_PITCH_SIGN 1.0f
 #define DIR_ROLL_SIGN 1.0f
 #define DIR_YAW_SIGN 1.0f
 
 // Sicurezza e trim motori
-#define MOTOR_TIMEOUT_MS 12000 // spegnimento automatico dopo 8 s
-#define TRIM_MIN 0.80f         // limiti moltiplicatori motori
+#define MOTOR_TIMEOUT_MS 45000 // spegnimento automatico dopo 8 s
+#define TRIM_MIN 0.80f        // limiti moltiplicatori motori
 #define TRIM_MAX 1.20f
 #define RX_LINE_LEN 64
 #define RX_QUEUE_LEN 4
+// Failsafe collegamento: se con i motori accesi non arriva "HB:" dall'ESP32
+// per LINK_TIMEOUT_MS (WiFi perso, filo UART staccato, pagina bloccata) -> kill
+#define LINK_TIMEOUT_MS 500
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -81,34 +83,35 @@ float dt_actual = 0.004f;
 
 // Variabili Calibrazione
 float gyro_x_cal = 0.0f, gyro_y_cal = 0.0f, gyro_z_cal = 0.0f;
-float acc_pitch_cal = -4.79f, acc_roll_cal = -0.89f; // -4.79   -0.89
+float acc_pitch_cal = -4.79f, acc_roll_cal = -0.89f; // -4.79   -0.89 stimati in precedenza con le accelerazioni in MPU_Init (tenendo il drone dritto)
 float gyro_rate_pitch = 0.0f;
 float gyro_rate_roll = 0.0f;
 float gyro_rate_yaw = 0.0f;
 
 // Variabili UART ESP32
 uint8_t esp32_rx_byte;
-char rx_line[RX_LINE_LEN]; // riga in costruzione (ISR)
+char rx_line[RX_LINE_LEN];                // riga in costruzione (ISR)
 uint8_t rx_index = 0;
 volatile uint8_t rx_overflow = 0;
 char rx_queue[RX_QUEUE_LEN][RX_LINE_LEN]; // coda comandi ISR -> main
 volatile uint8_t rx_q_head = 0, rx_q_tail = 0;
+volatile uint32_t link_last_tick = 0; // ultimo heartbeat "HB:" valido ricevuto
 char telemetry_tx_buffer[384];
 volatile uint8_t telemetry_tx_busy = 0;
 
-// Stato di sistema
+// Stato di sistema - Variabili PID
 uint32_t current_throttle = 1000;
-float pid_pitch_p = 2.16f, pid_pitch_i = 0.7f, pid_pitch_d = 0.8f;
-float pid_roll_p = 2.16f, pid_roll_i = 0.9f, pid_roll_d = 0.85f;
+float pid_pitch_p = 3.0f, pid_pitch_i = 0.7f, pid_pitch_d = 0.8f;
+float pid_roll_p = 3.0f, pid_roll_i = 0.9f, pid_roll_d = 0.85f;
 // PID Yaw (controllo sulla velocita' angolare, setpoint 0 deg/s).
-// Parti con valori bassi e alzali dalla pagina web.
-float pid_yaw_p = 0.3f, pid_yaw_i = 0.8f, pid_yaw_d = 0.1f;
+
+float pid_yaw_p = 1.0f, pid_yaw_i = 0.8f, pid_yaw_d = 0.1f;
 volatile uint8_t motors_enabled = 0;
-uint32_t motor_start_tick = 0;
+uint32_t motor_start_tick = 0;			// Per misurare i secondi in cui il drone vola (safe turn-off)
 
 // Moltiplicatori motori (1.0 = nessuna correzione) - VALORI DI DEFAULT
 // 0 = M1 Front Left, 1 = M2 Front Right, 2 = M3 Back Right, 3 = M4 Back Left
-float motor_trim[4] = {0.900f, 1.060f, 1.170f, 1.080f};
+float motor_trim[4] = {0.900f, 1.060f, 1.170f, 1.080f};			// Trim modificato per correggere la potenza dei motori (dispersione dei parametri)
 
 // Variabili PID
 float error_pitch = 0, integral_pitch = 0;
@@ -117,7 +120,7 @@ float error_yaw = 0, integral_yaw = 0;
 float prev_gyro_rate_yaw = 0, yaw_d_filt = 0;
 
 // Setpoint da comando direzionale (0 = hovering)
-float sp_pitch = 0.0f, sp_roll = 0.0f, sp_yaw_rate = 0.0f;
+float sp_pitch = 0.0f, sp_roll = 0.0f, sp_yaw_rate = 0.0f;			// variabili per la direzione
 uint32_t dir_last_tick = 0;
 /* USER CODE END PV */
 
@@ -173,7 +176,7 @@ int main(void) {
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_4);
 
   // Armamento ESC (1000 us minimo)
-  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1000);
+  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1000);		// Per quanto tempo il segnale deve stare alto (1000us= 1ms)
   __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 1000);
   __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, 1000);
   __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, 1000);
@@ -190,15 +193,23 @@ int main(void) {
   while (1) {
     uint32_t current_time = HAL_GetTick();
 
-    // WATCHDOG: spegnimento automatico dopo 8 s, controllato ad ogni giro
+    // WATCHDOG: spegnimento automatico dopo MOTOR_TIMEOUT_MS secondi, controllato ad ogni giro
     // (fuori dal blocco a 4 ms)
     if (motors_enabled &&
         (current_time - motor_start_tick >= MOTOR_TIMEOUT_MS)) {
       Motors_Kill();
     }
 
+    // WATCHDOG COLLEGAMENTO: nessun heartbeat valido -> spegni i motori.
+    // Cast a int32_t: link_last_tick viene aggiornato in ISR e puo' essere
+    // "piu' nuovo" di current_time (la sottrazione unsigned darebbe un kill falso)
+    if (motors_enabled &&
+        ((int32_t)(current_time - link_last_tick) >= LINK_TIMEOUT_MS)) {
+      Motors_Kill();
+    }
+
     // Timeout comando direzionale: senza DIR recenti torna in piano
-    if ((sp_pitch != 0.0f || sp_roll != 0.0f || sp_yaw_rate != 0.0f) &&
+    if ((sp_pitch != 0.0f || sp_roll != 0.0f || sp_yaw_rate != 0.0f) &&			// Siccome il joystick torna a 0 quando si molla il dito, questa non serve, tecnicmanete si può commentare
         (current_time - dir_last_tick >= DIR_TIMEOUT_MS)) {
       sp_pitch = 0.0f;
       sp_roll = 0.0f;
@@ -235,10 +246,10 @@ int main(void) {
               "pid_yaw_p:%.3f,pid_yaw_i:%.3f,pid_yaw_d:%.3f,"
               "trim1:%.3f,trim2:%.3f,trim3:%.3f,trim4:%.3f,"
               "motors:%d\n",
-              pitch, roll, gyro_rate_yaw, pid_pitch_p, pid_pitch_i, pid_pitch_d,
-              pid_roll_p, pid_roll_i, pid_roll_d, pid_yaw_p, pid_yaw_i,
-              pid_yaw_d, motor_trim[0], motor_trim[1], motor_trim[2],
-              motor_trim[3], (int)motors_enabled);
+              pitch, roll, gyro_rate_yaw, pid_pitch_p, pid_pitch_i,
+              pid_pitch_d, pid_roll_p, pid_roll_i, pid_roll_d, pid_yaw_p,
+              pid_yaw_i, pid_yaw_d, motor_trim[0], motor_trim[1],
+              motor_trim[2], motor_trim[3], (int)motors_enabled);
 
           if (len > 0 && len < (int)sizeof(telemetry_tx_buffer)) {
             telemetry_tx_busy = 1;
@@ -277,13 +288,14 @@ void MPU6050_Init(void) {
   uint8_t check, data;
 
   // Verifica presenza MPU6050 controllando il registro WHO_AM_I (0x75)
-  HAL_I2C_Mem_Read(&hi2c1, MPU6050_ADDR, 0x75, 1, &check, 1, 1000);
-  // firma HAL_I2C_Mem_Read: HAL_StatusTypeDef HAL_I2C_Mem_Read(I2C_HandleTypeDef *hi2c, uint16_t DevAddress, uint16_t MemAddress, uint16_t MemAddSize, uint8_t *pData, uint16_t Size, uint32_t Timeout)
+  HAL_I2C_Mem_Read(&hi2c1, MPU6050_ADDR, 0x75, 1, &check, 1, 1000);		// Salvo in &check il valore del registro WHO_AM_
+  // I2c mette uno "0" come ultimo bit per scrittura, e "1" come ultimo bit per lettura. Si usa sempre l'inidirizzo con "0" alla fine (sia per scrittura e lettura)
+  // e viene gestita in automatico dalla HAL.
 
   if (check == 104) { // 104 = 0x68 (Default per MPU6050)
     // 1. Risveglio MPU6050
     data = 0;
-    HAL_I2C_Mem_Write(&hi2c1, MPU6050_ADDR, 0x6B, 1, &data, 1, 1000);
+    HAL_I2C_Mem_Write(&hi2c1, MPU6050_ADDR, 0x6B, 1, &data, 1, 1000);  // Scrivo 0 in tutto il registro per togliere sleep mode del MPU6050
     // 2. Configurazione Giroscopio: Fondo scala +/- 500 deg/s
     data = 0x08;
     HAL_I2C_Mem_Write(&hi2c1, MPU6050_ADDR, 0x1B, 1, &data, 1, 1000);
@@ -295,23 +307,30 @@ void MPU6050_Init(void) {
     // phase lag
 
     // modificato 188Hz 01
-
+    // 0x02 giroscopio =  98 Hz ( delay 2.8ms) --- accelerometro = 94 Hz (Delay 3.0ms)
     data = 0x02;
     HAL_I2C_Mem_Write(&hi2c1, MPU6050_ADDR, 0x1A, 1, &data, 1, 1000);
 
     // --- 4. CALIBRAZIONE GIROSCOPIO E ACCELEROMETRO ---
-    HAL_Delay(4000);
 
-    int32_t gx_sum = 0, gy_sum = 0, gz_sum = 0;
+    // Qui viene fatta la media con num_samples campioni per la calibrazione, per determinare gli offsets a riposo.
+
+
+    HAL_Delay(4000);		// Delay per aspettare che il drone sia fermo per terra (orizzontale)
+
+    // Inizializzazione variabili
+    int32_t gx_sum = 0, gy_sum = 0, gz_sum = 0;					// variabili per giroscopio
     float acc_pitch_sum = 0.0f, acc_roll_sum = 0.0f;
     uint8_t rec_data[14];
     const int num_samples = 2000;
 
     for (int i = 0; i < num_samples; i++) {
-      HAL_I2C_Mem_Read(&hi2c1, MPU6050_ADDR, 0x3B, 1, rec_data, 14, 100);
+      HAL_I2C_Mem_Read(&hi2c1, MPU6050_ADDR, 0x3B, 1, rec_data, 14, 100); // Legge nel registro 3B che contiene dati su accelerazioni (ci sono due registri per ogni asse perchè ho 16 bit per asse)
+      // Inoltre ci sono altri registri interni che si aggiornano in maniera continua (non accessibili dall'utente), il secondo tipo di registro (user facing) si aggiorna solo quando la comunicazione è in idle (ovvero non c'è lettura). Questa funzione
+      // legge tutti i registri (da 0x3B fino a 0x48 ovvero 14 byte salvati in rec_data).
 
       // Somma Giroscopio
-      gx_sum += (int16_t)(rec_data[8] << 8 | rec_data[9]);
+      gx_sum += (int16_t)(rec_data[8] << 8 | rec_data[9]);			// Prendo l'ottavo byte (gli 8 bit del registro high, i più significativi), shifto a sx di 8, e ci affianco 8 bit low (meno significativi), e faccio casting per avere numero a 16bit
       gy_sum += (int16_t)(rec_data[10] << 8 | rec_data[11]);
       gz_sum += (int16_t)(rec_data[12] << 8 | rec_data[13]);
 
@@ -320,9 +339,16 @@ void MPU6050_Init(void) {
       int16_t ay = (int16_t)(rec_data[2] << 8 | rec_data[3]);
       int16_t az = (int16_t)(rec_data[4] << 8 | rec_data[5]);
 
-      acc_pitch_sum += atan2f(-ax, sqrtf(ay * ay + az * az)) * RAD_TO_DEG;
-      acc_roll_sum += atan2f(ay, sqrtf(ax * ax + az * az)) * RAD_TO_DEG;
+      /*
 
+       Qui abbiamo stimato una volta sola gli angoli (siccome il drone e MPU6050 non sono allineati perfettamente con la gravità, ovvero non sono a bolla).
+       Una volta stimati questi valori, gli abbiamo inseriti a mano nel codice in float acc_pitch_cal = -4.79f, acc_roll_cal = -0.89f;
+
+
+       acc_pitch_sum += atan2f(-ax, sqrtf(ay * ay + az * az)) * RAD_TO_DEG;
+       acc_roll_sum += atan2f(ay, sqrtf(ax * ax + az * az)) * RAD_TO_DEG;
+
+        */
       HAL_Delay(3); // Attesa per non saturare il bus I2C
     }
 
@@ -331,7 +357,7 @@ void MPU6050_Init(void) {
     gyro_y_cal = (float)gy_sum / num_samples;
     gyro_z_cal = (float)gz_sum / num_samples;
 
-    // Pre-carica i filtri LPF con l'ultima lettura
+    // Pre-carica i filtri LPF con l'ultima lettura (carichiamo l'ultimo valore misurato dal MPU6050 per il LPF che è ricorsivo, e necessitiamo valori passati)
     ax_filt = (int16_t)(rec_data[0] << 8 | rec_data[1]);
     ay_filt = (int16_t)(rec_data[2] << 8 | rec_data[3]);
     az_filt = (int16_t)(rec_data[4] << 8 | rec_data[5]);
@@ -349,7 +375,7 @@ void MPU6050_Read_Filter_Compute(void) {
   uint8_t rec_data[14];
 
   // Lettura burst da 14 byte a partire dall'indirizzo base dei dati (0x3B)
-  HAL_I2C_Mem_Read(&hi2c1, MPU6050_ADDR, 0x3B, 1, rec_data, 14, 100);
+  HAL_I2C_Mem_Read(&hi2c1, MPU6050_ADDR, 0x3B, 1, rec_data, 14, 100);			// 14 byte da 0x3B in poi e mettili in rec_data
 
   // Parsing registri grezzi
   int16_t accel_x_raw = (int16_t)(rec_data[0] << 8 | rec_data[1]);
@@ -365,14 +391,8 @@ void MPU6050_Read_Filter_Compute(void) {
   az_filt = LPF_ALPHA * accel_z_raw + (1.0f - LPF_ALPHA) * az_filt;
 
   // Estrazione angoli grezzi accelerometro e SOTTRAZIONE BIAS (Offset)
-  float acc_pitch =
-      (atan2f(-ax_filt, sqrtf(ay_filt * ay_filt + az_filt * az_filt)) *
-       RAD_TO_DEG) -
-      acc_pitch_cal;
-  float acc_roll =
-      (atan2f(ay_filt, sqrtf(ax_filt * ax_filt + az_filt * az_filt)) *
-       RAD_TO_DEG) -
-      acc_roll_cal;
+  float acc_pitch = (atan2f(-ax_filt, sqrtf(ay_filt * ay_filt + az_filt * az_filt)) * RAD_TO_DEG) - acc_pitch_cal;
+  float acc_roll = (atan2f(ay_filt, sqrtf(ax_filt * ax_filt + az_filt * az_filt)) * RAD_TO_DEG) - acc_roll_cal;
 
   // Aggiornamento tempo per il controllo del loop principale
   uint32_t current_time = HAL_GetTick();
@@ -380,12 +400,13 @@ void MPU6050_Read_Filter_Compute(void) {
 
   // Hardcode di dt_actual a 4ms per annullare il jitter (HAL_GetTick oscilla e
   // destabilizza la Derivata)
-  dt_actual = 0.004f;
+  // dt_actual = 0.004f;
 
   // Velocita' angolari in Gradi/Secondo con offset rimosso
   // Gyro X ruota attorno a X -> ROLL ; Gyro Y ruota attorno a Y -> PITCH
   // Gyro Z ruota attorno a Z -> YAW
-  gyro_rate_roll = GYRO_ROLL_SIGN * (gyro_x_raw - gyro_x_cal) / GYRO_SCALE;
+  gyro_rate_roll = GYRO_ROLL_SIGN * (gyro_x_raw - gyro_x_cal) / GYRO_SCALE;		// Misuro la variazione dell'angolo, ma siccome gyro_x_raw mi torna un numero intero a 16bit (fino a +32768, e usando
+  // un fattore di scala di +-500 gradi/s, ottengo GYRO_SCALE = 32768/500 = 65.5 gradi/s. Si ottiene dunque la conversione in gradi/s ovvero velocità angolare)
   gyro_rate_pitch = GYRO_PITCH_SIGN * (gyro_y_raw - gyro_y_cal) / GYRO_SCALE;
   gyro_rate_yaw = GYRO_YAW_SIGN * (gyro_z_raw - gyro_z_cal) / GYRO_SCALE;
 
@@ -422,6 +443,7 @@ void Process_Command(char *line) {
     if (line[4] == 't') {
       if (!motors_enabled) { // un secondo 't' NON rinnova il timer degli 8 s
         motor_start_tick = HAL_GetTick();
+        link_last_tick = HAL_GetTick(); // parte il watchdog collegamento
         motors_enabled = 1;
       }
     } else if (line[4] == 's' || line[4] == 'e') {
@@ -434,8 +456,8 @@ void Process_Command(char *line) {
     }
   } else if (strncmp(line, "PID:", 4) == 0) {
     float v[6];
-    if (sscanf(&line[4], "%f,%f,%f,%f,%f,%f", &v[0], &v[1], &v[2], &v[3], &v[4],
-               &v[5]) == 6) {
+    if (sscanf(&line[4], "%f,%f,%f,%f,%f,%f", &v[0], &v[1], &v[2], &v[3],
+               &v[4], &v[5]) == 6) {
       pid_pitch_p = v[0];
       pid_pitch_i = v[1];
       pid_pitch_d = v[2];
@@ -453,18 +475,12 @@ void Process_Command(char *line) {
   } else if (strncmp(line, "DIR:", 4) == 0) {
     int p, r, y;
     if (sscanf(&line[4], "%d,%d,%d", &p, &r, &y) == 3) {
-      if (p > 100)
-        p = 100;
-      if (p < -100)
-        p = -100;
-      if (r > 100)
-        r = 100;
-      if (r < -100)
-        r = -100;
-      if (y > 1)
-        y = 1;
-      if (y < -1)
-        y = -1;
+      if (p > 100) p = 100;
+      if (p < -100) p = -100;
+      if (r > 100) r = 100;
+      if (r < -100) r = -100;
+      if (y > 1) y = 1;
+      if (y < -1) y = -1;
       sp_pitch = DIR_PITCH_SIGN * ((float)p / 100.0f) * DIR_TILT_DEG;
       sp_roll = DIR_ROLL_SIGN * ((float)r / 100.0f) * DIR_TILT_DEG;
       sp_yaw_rate = DIR_YAW_SIGN * (float)y * DIR_YAW_RATE_DPS;
@@ -494,7 +510,7 @@ void PID_ComputeAndMix(void) {
     integral_pitch = 0;
     integral_roll = 0;
     integral_yaw = 0;
-    prev_gyro_rate_yaw = gyro_rate_yaw;
+    prev_gyro_rate_yaw = gyro_rate_yaw;		// Qui ci serve lo yaw_rate precedente perchè dobbiamo calcolare il derivativo. Per pitch e roll al posto della derivata usiamo direttamente la velocità angolare
     yaw_d_filt = 0;
     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1000);
     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 1000);
@@ -512,7 +528,7 @@ void PID_ComputeAndMix(void) {
   integral_roll += error_roll * dt_actual;
 
   // Componente Derivativa: d(setpoint - angolo)/dt = -velocita_angolare.
-  float deriv_pitch = -gyro_rate_pitch;
+  float deriv_pitch = -gyro_rate_pitch;			// Usiamo direttamente la velocità angolare al posto della derivata dell'angolo rispetto al tempo.
   float deriv_roll = -gyro_rate_roll;
 
   // Uscita PID
@@ -562,14 +578,10 @@ void PID_ComputeAndMix(void) {
   // dell'IMU). Yaw: le due diagonali (M1+M3 e M2+M4) girano in versi opposti,
   // quindi la correzione yaw si somma su una diagonale e si sottrae
   // sull'altra.
-  int16_t m1 =
-      (int16_t)(t1 + pid_pitch_out + pid_roll_out + yaw_mix); // Front Left
-  int16_t m2 =
-      (int16_t)(t2 + pid_pitch_out - pid_roll_out - yaw_mix); // Front Right
-  int16_t m3 =
-      (int16_t)(t3 - pid_pitch_out - pid_roll_out + yaw_mix); // Back Right
-  int16_t m4 =
-      (int16_t)(t4 - pid_pitch_out + pid_roll_out - yaw_mix); // Back Left
+  int16_t m1 = (int16_t)(t1 + pid_pitch_out + pid_roll_out + yaw_mix); // Front Left
+  int16_t m2 = (int16_t)(t2 + pid_pitch_out - pid_roll_out - yaw_mix); // Front Right
+  int16_t m3 = (int16_t)(t3 - pid_pitch_out - pid_roll_out + yaw_mix); // Back Right
+  int16_t m4 = (int16_t)(t4 - pid_pitch_out + pid_roll_out - yaw_mix); // Back Left
 
   // Saturazione segnali (Anti-Windup Meccanico)
   m1 = (m1 > 2000) ? 2000 : (m1 < 1000 ? 1000 : m1);
@@ -579,7 +591,8 @@ void PID_ComputeAndMix(void) {
 
   // Applicazione al registro PWM, protetta: se un EMERGENCY STOP arriva (ISR)
   // mentre stavamo calcolando, NON deve essere sovrascritto con valori vecchi.
-  __disable_irq();
+  __disable_irq();							// Si disattivano gli interrupt, perchè se entriamo nell'if(motors_enable) ed arriva un segnale di emergency stop, se esegue motors_kill(), e successivamente
+  // il codice riprende dall'ultima linea, dando potenza ai motori non ancora settati (questo perchè motors_kill non lavora su m1,m2,m3,m4
   if (motors_enabled) {
     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, m1);
     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, m2);
@@ -607,6 +620,8 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
       } else if (strstr(rx_line, "CMD:e") != NULL ||
                  strstr(rx_line, "CMD:s") != NULL) {
         Motors_Kill();
+      } else if (strncmp(rx_line, "HB:", 3) == 0) {
+        link_last_tick = HAL_GetTick(); // heartbeat: non va in coda
       } else {
         uint8_t next = (rx_q_head + 1) % RX_QUEUE_LEN;
         if (next != rx_q_tail) { // se la coda e' piena scarta
@@ -846,6 +861,7 @@ void MPU_Config(void) {
   MPU_Region_InitTypeDef MPU_InitStruct = {0};
 
   HAL_MPU_Disable();
+
   MPU_InitStruct.Enable = MPU_REGION_ENABLE;
   MPU_InitStruct.Number = MPU_REGION_NUMBER0;
   MPU_InitStruct.BaseAddress = 0x0;

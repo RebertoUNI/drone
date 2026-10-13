@@ -1,24 +1,24 @@
 #include "interfacciaWeb.h"
 #include <WebServer.h>
 #include <WiFi.h>
-
+ 
 const char *AP_SSID = "Drone_Test";
 const char *AP_PASS = "DaniGay7";
-
+ 
 #define RXD2 16
 #define TXD2 17
 #define NUCLEO_BAUD 115200
-
+ 
 // Spegnimento automatico: l'STM32 spegne a 8000 ms.
 // L'ESP32 e' un backup ridondante, scatta poco dopo.
 uint32_t espMotorTimeoutMs = 45000;
-
+ 
 // Limiti trim motori (devono coincidere con TRIM_MIN / TRIM_MAX dell'STM32)
 #define TRIM_MIN 0.80f
 #define TRIM_MAX 1.20f
-
+ 
 WebServer server(80);
-
+ 
 // Variabili globali per memorizzare telemetria
 String current_pitch = "0.00";
 String current_roll = "0.00";
@@ -35,23 +35,36 @@ String current_pid_yaw_d = "";
 String current_trim[4] = {"", "", "", ""}; // vuoti finche' l'STM32 non risponde
 String current_motors = "0";               // stato motori riportato dall'STM32
 String current_battery = "0.00";           // Tensione batteria letta sul pin 34
-
+ 
 // Stato lato ESP32 per il watchdog di backup
 bool esp_motors_on = false;
 unsigned long esp_motor_start_ms = 0;
-
+ 
+// ---- Failsafe collegamento ----
+#define CLIENT_TIMEOUT_MS 500 // nessun /hb dalla pagina per tanto -> client perso
+#define HB_PERIOD_MS 100      // periodo heartbeat verso l'STM32
+unsigned long last_client_ms = 0;  // ultimo /hb ricevuto dalla pagina
+unsigned long last_stm_rx_ms = 0;  // ultima riga ANG: ricevuta dall'STM32
+unsigned long last_hb_tx_ms = 0;
+unsigned long last_kill_tx_ms = 0;
+ 
+bool clientAlive() {
+  return WiFi.softAPgetStationNum() > 0 &&
+         (millis() - last_client_ms < CLIENT_TIMEOUT_MS);
+}
+ 
 String telemetryField(const String &payload, const char *name) {
   String prefix = String(name) + ":";
   int start = payload.indexOf(prefix);
   if (start < 0) {
     return "";
   }
-
+ 
   start += prefix.length();
   int end = payload.indexOf(',', start);
   return payload.substring(start, end < 0 ? payload.length() : end);
 }
-
+ 
 // Invia lo stop di emergenza all'STM32 (ripetuto: un byte corrotto non deve
 // poter impedire lo spegnimento)
 void sendKillToStm() {
@@ -62,9 +75,15 @@ void sendKillToStm() {
   esp_motors_on = false;
   current_motors = "0";
 }
-
+ 
 void handleRoot() { server.send(200, "text/html", index_html); }
-
+ 
+// Heartbeat dalla pagina: /hb
+void handleHb() {
+  last_client_ms = millis();
+  server.send(200, "text/plain", "OK");
+}
+ 
 void handleCommand() {
   if (server.hasArg("action")) {
     String action = server.arg("action");
@@ -80,13 +99,13 @@ void handleCommand() {
   }
   server.send(200, "text/plain", "OK");
 }
-
+ 
 // Emergency stop: spegne SEMPRE, a prescindere dallo stato
 void handleEstop() {
   sendKillToStm();
   server.send(200, "text/plain", "OK");
 }
-
+ 
 void handleThrottle() {
   if (server.hasArg("val")) {
     String val = server.arg("val");
@@ -94,12 +113,12 @@ void handleThrottle() {
   }
   server.send(200, "text/plain", "OK");
 }
-
+ 
 void handlePID() {
   if (server.hasArg("pitch_p") && server.hasArg("pitch_i") &&
       server.hasArg("pitch_d") && server.hasArg("roll_p") &&
       server.hasArg("roll_i") && server.hasArg("roll_d")) {
-
+ 
     String pp = server.arg("pitch_p");
     String ip = server.arg("pitch_i");
     String dp = server.arg("pitch_d");
@@ -112,7 +131,7 @@ void handlePID() {
   }
   server.send(200, "text/plain", "OK");
 }
-
+ 
 // PID Yaw: /pidyaw?yaw_p=1.000&yaw_i=0.000&yaw_d=0.000
 void handlePIDYaw() {
   if (server.hasArg("yaw_p") && server.hasArg("yaw_i") &&
@@ -127,7 +146,7 @@ void handlePIDYaw() {
   }
   server.send(400, "text/plain", "Parametri mancanti");
 }
-
+ 
 // Moltiplicatori motori: /trim?m1=1.000&m2=1.000&m3=1.000&m4=1.000
 // M1 Front Left, M2 Front Right, M3 Back Right, M4 Back Left
 void handleTrim() {
@@ -148,7 +167,7 @@ void handleTrim() {
   }
   server.send(400, "text/plain", "Parametri mancanti");
 }
-
+ 
 // Direzione: /dir?p=50&r=-30&y=1
 // p: -100..+100 (+ avanti)  | r: -100..+100 (+ destra)   [joystick analogico]
 // y: -1, 0, +1 (+ orario)                                [pulsanti yaw]
@@ -165,14 +184,14 @@ void handleDir() {
   }
   server.send(400, "text/plain", "Parametri mancanti");
 }
-
+ 
 void handleTimeout() {
   if (server.hasArg("ms")) {
     espMotorTimeoutMs = server.arg("ms").toInt();
   }
   server.send(200, "text/plain", "OK");
 }
-
+ 
 // Endpoint JSON con angoli, parametri PID, trim e stato motori.
 void handleTelemetry() {
   String json = "{";
@@ -194,11 +213,12 @@ void handleTelemetry() {
   json += "\"trim_m4\":\"" + current_trim[3] + "\",";
   json += "\"motors\":\"" + current_motors + "\",";
   json += "\"battery\":\"" + current_battery + "\",";
+  json += "\"stm_age\":\"" + String(millis() - last_stm_rx_ms) + "\",";
   json += "\"timeout_ms\":\"" + String(espMotorTimeoutMs) + "\"";
   json += "}";
   server.send(200, "application/json", json);
 }
-
+ 
 void setup() {
   Serial.begin(115200);
   // La riga di telemetria e' lunga (~260 caratteri): buffer RX piu' grande
@@ -207,13 +227,13 @@ void setup() {
   Serial2.setRxBufferSize(1024);
   Serial2.begin(NUCLEO_BAUD, SERIAL_8N1, RXD2, TXD2);
   Serial2.setTimeout(20); // readStringUntil non deve bloccare il web server
-
+ 
   WiFi.softAP(AP_SSID, AP_PASS);
   IPAddress IP = WiFi.softAPIP();
-
+ 
   Serial.print("AP Pronto. Connettiti a IP: ");
   Serial.println(IP);
-
+ 
   server.on("/", HTTP_GET, handleRoot);
   server.on("/cmd", HTTP_GET, handleCommand);
   server.on("/estop", HTTP_GET, handleEstop);
@@ -224,33 +244,49 @@ void setup() {
   server.on("/dir", HTTP_GET, handleDir);
   server.on("/timeout", HTTP_GET, handleTimeout);
   server.on("/telemetry", HTTP_GET, handleTelemetry);
-
+  server.on("/hb", HTTP_GET, handleHb);
+ 
   server.begin();
 }
-
+ 
 unsigned long last_battery_read = 0;
-
+ 
 void loop() {
   server.handleClient();
-
+ 
   if (millis() - last_battery_read > 1000) {
     last_battery_read = millis();
     float v_out = analogReadMilliVolts(34) / 1000.0;
     float v_batt = v_out * ((100.0 + 22.0) / 22.0);
     current_battery = String(v_batt, 2);
   }
-
+ 
   // Watchdog di backup: se i motori risultano accesi da troppo tempo, spegni
   if (esp_motors_on &&
       (millis() - esp_motor_start_ms >= espMotorTimeoutMs)) {
     sendKillToStm();
   }
-
+ 
+  // Heartbeat verso l'STM32: lo mandiamo SOLO se il client e' vivo.
+  // Se il telefono sparisce, l'STM32 smette di riceverlo e si spegne da solo.
+  if (clientAlive()) {
+    if (millis() - last_hb_tx_ms >= HB_PERIOD_MS) {
+      last_hb_tx_ms = millis();
+      Serial2.print("HB:1\n");
+    }
+  } else if ((esp_motors_on || current_motors == "1") &&
+             millis() - last_kill_tx_ms >= 200) {
+    // Client perso con motori accesi: kill esplicito (ripetuto ogni 200 ms)
+    last_kill_tx_ms = millis();
+    sendKillToStm();
+  }
+ 
   // Acquisizione asincrona della stringa telemetrica da STM32
   if (Serial2.available()) {
     String incoming = Serial2.readStringUntil('\n');
     incoming.trim();
     if (incoming.startsWith("ANG:")) {
+      last_stm_rx_ms = millis();
       String payload = incoming.substring(4);
       int commaIndex1 = payload.indexOf(',');
       if (commaIndex1 > 0) {
@@ -261,11 +297,11 @@ void loop() {
         } else {
           current_roll = payload.substring(commaIndex1 + 1);
         }
-
+ 
         String value = telemetryField(payload, "yaw_rate");
         if (value.length() > 0)
           current_yaw_rate = value;
-
+ 
         value = telemetryField(payload, "pid_pitch_p");
         if (value.length() > 0)
           current_pid_pitch_p = value;
@@ -293,14 +329,14 @@ void loop() {
         value = telemetryField(payload, "pid_yaw_d");
         if (value.length() > 0)
           current_pid_yaw_d = value;
-
+ 
         const char *trimNames[4] = {"trim1", "trim2", "trim3", "trim4"};
         for (int i = 0; i < 4; i++) {
           value = telemetryField(payload, trimNames[i]);
           if (value.length() > 0)
             current_trim[i] = value;
         }
-
+ 
         value = telemetryField(payload, "motors");
         if (value.length() > 0) {
           current_motors = value;
@@ -313,3 +349,5 @@ void loop() {
     }
   }
 }
+ 
+ 
