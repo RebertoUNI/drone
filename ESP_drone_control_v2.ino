@@ -3,7 +3,7 @@
 #include <WiFi.h>
  
 const char *AP_SSID = "Drone_Test";
-const char *AP_PASS = "DaniGay7"; //da cambiare
+const char *AP_PASS = "Drone4877";
  
 #define RXD2 16
 #define TXD2 17
@@ -62,8 +62,8 @@ String telemetryField(const String &payload, const char *name) {
   if (start < 0) {
     return "";
   } 
-  start += prefix.length();
-  int end = payload.indexOf(',', start);
+  start += prefix.length();             // Metto come posizione l'indice della stringa il carattere successivo ai ":" 
+  int end = payload.indexOf(',', start);    // Iniziando dalla posizone start cerca la ","
   return payload.substring(start, end < 0 ? payload.length() : end);
 }
  
@@ -78,7 +78,7 @@ void sendKillToStm() {
   current_motors = "0";
 }
  
-void handleRoot() { server.send(200, "text/html", index_html); }
+void handleRoot() { server.send(200, "text/html", index_html); }      // Manda in automatico una volta collegati la pagina html
  
 // Heartbeat dalla pagina: /hb
 void handleHb() {
@@ -86,9 +86,9 @@ void handleHb() {
   server.send(200, "text/plain", "OK");
 }
  
-void handleCommand() {
-  if (server.hasArg("action")) {
-    String action = server.arg("action");
+void handleCommand() {              // questa funzione gestisce i comandi inviati dal client tramite richieste http e le inoltra su uart 
+  if (server.hasArg("action")) {          // Guarda se nella richiesta HTTP c'è una query string con "/cmd?action=..."
+    String action = server.arg("action");     // Estrae il valore di action... (query del tipo "action=..."")
     if (action == "t") {
       Serial2.print("CMD:t\n");
       esp_motors_on = true;
@@ -129,13 +129,13 @@ void handlePID() {
     String dr = server.arg("roll_d");
     // Invia stringa completa: PID:pitchP,pitchI,pitchD,rollP,rollI,rollD
     Serial2.printf("PID:%s,%s,%s,%s,%s,%s\n", pp.c_str(), ip.c_str(),
-                   dp.c_str(), pr.c_str(), ir.c_str(), dr.c_str());
-  }
+                   dp.c_str(), pr.c_str(), ir.c_str(), dr.c_str());           // c_str() per convertire String in const char* (necessario per printf)
+  }                                                                           
   server.send(200, "text/plain", "OK");
 }
  
-// PID Yaw: /pidyaw?yaw_p=1.000&yaw_i=0.000&yaw_d=0.000
-void handlePIDYaw() {
+
+void handlePIDYaw() {                                         // PID Yaw: /pidyaw?yaw_p=1.000&yaw_i=0.000&yaw_d=0.000 esempio query string
   if (server.hasArg("yaw_p") && server.hasArg("yaw_i") &&
       server.hasArg("yaw_d")) {
     String yp = server.arg("yaw_p");
@@ -143,10 +143,9 @@ void handlePIDYaw() {
     String yd = server.arg("yaw_d");
     // Invia: YAW:P,I,D
     Serial2.printf("YAW:%s,%s,%s\n", yp.c_str(), yi.c_str(), yd.c_str());
-    server.send(200, "text/plain", "OK");
-    return;
+   
   }
-  server.send(400, "text/plain", "Parametri mancanti");
+   server.send(200, "text/plain", "OK");
 }
  
 // Moltiplicatori motori: /trim?m1=1.000&m2=1.000&m3=1.000&m4=1.000
@@ -164,30 +163,29 @@ void handleTrim() {
       }
     }
     Serial2.printf("TRIM:%.3f,%.3f,%.3f,%.3f\n", k[0], k[1], k[2], k[3]);
-    server.send(200, "text/plain", "OK");
-    return;
+    
   }
-  server.send(400, "text/plain", "Parametri mancanti");
+    server.send(200, "text/plain", "OK");
 }
  
-// Direzione: /dir?p=50&r=-30&y=1
+// Direzione: /dir?p=50&r=-50&y=1
 // p: -100..+100 (+ avanti)  | r: -100..+100 (+ destra)   [joystick analogico]
 // y: -1, 0, +1 (+ orario)                                [pulsanti yaw]
 // La pagina lo rinvia ogni 100 ms finche' il joystick/tasto e' attivo;
 // l'STM32 riporta il drone in piano se non riceve DIR per 400 ms.
 void handleDir() {
   if (server.hasArg("p") && server.hasArg("r") && server.hasArg("y")) {
-    int p = constrain(server.arg("p").toInt(), -100, 100);
-    int r = constrain(server.arg("r").toInt(), -100, 100);
+    int p = constrain(server.arg("p").toInt(), -100, 100);                // convertiamo il valore numerico di p (che è stringa) in intero per poter usare
+    int r = constrain(server.arg("r").toInt(), -100, 100);                //  constrain
     int y = constrain(server.arg("y").toInt(), -1, 1);
     Serial2.printf("DIR:%d,%d,%d\n", p, r, y);
-    server.send(200, "text/plain", "OK");
-    return;
+    
   }
-  server.send(400, "text/plain", "Parametri mancanti");
+      server.send(200, "text/plain", "OK");
+
 }
  
-void handleTimeout() {
+void handleTimeout() {          // locale dell'ESP32 (Sulla H7 è limitato a 45 secondi, quindi il massimo)
   if (server.hasArg("ms")) {
     espMotorTimeoutMs = server.arg("ms").toInt();
   }
@@ -195,7 +193,7 @@ void handleTimeout() {
 }
  
 // Endpoint JSON con angoli, parametri PID, trim e stato motori.
-void handleTelemetry() {
+void handleTelemetry() {                                  // Gestisce i parametri di telemetria ricevuti dalla H7 e spedisce tutto in JSON al client su pagina web
   String json = "{";
   json += "\"pitch\":\"" + current_pitch + "\",";
   json += "\"roll\":\"" + current_roll + "\",";
@@ -223,20 +221,22 @@ void handleTelemetry() {
  
 void setup() {
   Serial.begin(115200);
-  // La riga di telemetria e' lunga (~260 caratteri): buffer RX piu' grande
+  // La riga di telemetria e' lunga (~260 caratteri): buffer RX piu' grande perchè la stringa di telemetria mandata dal H7 è grande
   // del default (256) per non perdere byte mentre gira il web server.
   // Va chiamato PRIMA di Serial2.begin().
   Serial2.setRxBufferSize(1024);
   Serial2.begin(NUCLEO_BAUD, SERIAL_8N1, RXD2, TXD2);
-  Serial2.setTimeout(20); // readStringUntil non deve bloccare il web server
+  Serial2.setTimeout(20); // per evitare che si blocchi ad aspettare (non deve bloccare il web server)
  
   WiFi.softAP(AP_SSID, AP_PASS);
   IPAddress IP = WiFi.softAPIP();
  
   Serial.print("AP Pronto. Connettiti a IP: ");
   Serial.println(IP);
+
+  // server.on associa ad un determinato URL la funzione corrispondente
  
-  server.on("/", HTTP_GET, handleRoot);
+  server.on("/", HTTP_GET, handleRoot); 
   server.on("/cmd", HTTP_GET, handleCommand);
   server.on("/estop", HTTP_GET, handleEstop);
   server.on("/throttle", HTTP_GET, handleThrottle);
@@ -256,12 +256,19 @@ unsigned long last_battery_read = 0;
 void loop() {
   server.handleClient();
  
-  if (millis() - last_battery_read > 1000) {
-    last_battery_read = millis();
-    float v_out = analogReadMilliVolts(34) / 1000.0;
-    float v_batt = v_out * ((100.0 + 22.0) / 22.0);
-    current_battery = String(v_batt, 2);
+if (millis() - last_battery_read > 1000) {    // Effettua misura della tensione della batteria, e fa la media
+  last_battery_read = millis();
+  
+  // Effettua 10 letture consecutive
+  float sum = 0;
+  for (int i = 0; i < 10; i++) {
+    sum += analogReadMilliVolts(34) / 1000.0;
   }
+  float v_out = sum / 10.0; // Calcola la media
+  
+  float v_batt = v_out * ((100.0 + 22.0) / 22.0);
+  current_battery = String(v_batt, 2);
+}
  
   // Watchdog di backup: se i motori risultano accesi da troppo tempo, spegni
   if (esp_motors_on &&
@@ -352,5 +359,3 @@ void loop() {
     }
   }
 }
- 
- 
