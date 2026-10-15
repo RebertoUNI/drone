@@ -1,0 +1,47 @@
+graph TB
+    subgraph L1 ["LIVELLO 1: Ground Control Station (Browser Client)"]
+        UI_MAIN["Dashboard & Tuning UI<br/>(PID, Trim, Telemetria, Timeout)"]
+        UI_REM["Telecomando Touch / Tastiera<br/>(Stick Virtuali Gas/Yaw & Pitch/Roll)"]
+        JS_LOOP["Motore JS Asincrono<br/>- Heartbeat TX: 10 Hz (100ms)<br/>- Telemetry RX: 5 Hz (200ms)<br/>- Direction TX: 10 Hz (100ms)"]
+        
+        UI_MAIN --> JS_LOOP
+        UI_REM --> JS_LOOP
+    end
+
+    subgraph L2 ["LIVELLO 2: Bridge & Safety Supervisor (ESP32)"]
+        WIFI_AP["WiFi SoftAP ('Drone_Test')<br/>WebServer HTTP (Porta 80)"]
+        ADC_BAT["Lettura ADC Batteria (Pin 34)<br/>Partitore resistivo @ 1 Hz"]
+        ESP_WD["Logica Failsafe & Watchdog ESP32<br/>- Client Timeout: 500ms<br/>- Motor Timeout: 45s (config.)<br/>- Heartbeat Forwarder: 10 Hz"]
+        UART_ESP["Gestore Serial2 (115200 baud)<br/>RX Buffer: 1024B | Pin 16/17"]
+
+        WIFI_AP <--> ESP_WD
+        ADC_BAT --> WIFI_AP
+        ESP_WD <--> UART_ESP
+    end
+
+    subgraph L3 ["LIVELLO 3: Flight Controller Real-Time (STM32)"]
+        UART_ISR["USART2 RX Interrupt (ISR)<br/>- Parsing immediato Kill ('CMD:e/s')<br/>- Reset Watchdog su 'HB:1'<br/>- Accodamento in Ring Buffer (4 slot)"]
+        CMD_PARS["Parser Comandi (Main Loop)<br/>Aggiornamento Setpoint, PID e Trim"]
+        STM_WD["Watchdog Hardware/Software<br/>- Link Timeout: 500ms<br/>- Motor Timeout: 45s"]
+        CTRL_LOOP["Control Loop Deterministico @ 250 Hz (4ms)<br/>1. Lettura I2C & Filtri (LPF + Complementare)<br/>2. Calcolo 3x PID (Pitch, Roll, Yaw)<br/>3. Motor Mixing X-Config + Trim"]
+        TEL_TX["Generatore Telemetria (USART2 TX IT)<br/>Eseguito ogni 10 cicli @ 25 Hz (40ms)"]
+
+        UART_ISR -->|Comandi standard| CMD_PARS
+        UART_ISR -.->|Kill immediato| CTRL_LOOP
+        UART_ISR -.->|Tick HB| STM_WD
+        STM_WD -.->|Motors_Kill| CTRL_LOOP
+        CMD_PARS --> CTRL_LOOP
+        CTRL_LOOP --> TEL_TX
+    end
+
+    subgraph HW ["LIVELLO 4: Sensori & Attuatori (Hardware)"]
+        IMU["IMU MPU6050<br/>Gyro (±500°/s) + Accel (±2g)"]
+        ESC["4x ESC + Motori Brushless<br/>Configurazione QuadX (M1..M4)"]
+    end
+
+    %% Connessioni tra livelli
+    JS_LOOP <==>|"HTTP GET / JSON<br/>(WiFi IEEE 802.11)"| WIFI_AP
+    UART_ESP <==>|"Protocollo Testuale ASCII<br/>(UART 115200 8N1)"| UART_ISR
+    TEL_TX ==>|"Stringa 'ANG:...' @ 25Hz"| UART_ESP
+    IMU ==>|"I2C1 Fast Mode (400 kHz)<br/>Burst 14 Byte @ 250 Hz"| CTRL_LOOP
+    CTRL_LOOP ==>|"TIM1 PWM (400 Hz)<br/>Impulso 1000-2000 µs"| ESC

@@ -254,8 +254,8 @@ int main(void) {
 
           if (len > 0 && len < (int)sizeof(telemetry_tx_buffer)) {
             telemetry_tx_busy = 1;
-            if (HAL_UART_Transmit_IT(&huart2, (uint8_t *)telemetry_tx_buffer,
-                                     (uint16_t)len) != HAL_OK) {
+            if (HAL_UART_Transmit_IT(&huart2, (uint8_t *)telemetry_tx_buffer,			// Nel caso in cui non vada bene la ricezione non torna HAL_OK
+                                     (uint16_t)len) != HAL_OK) {						// Una volta mandato correttamente l'ultimo byte si attiva HAL_UART_TxCpltCallback
               telemetry_tx_busy = 0;
             }
           }
@@ -268,8 +268,14 @@ int main(void) {
     // PARSING DEI COMANDI ESP32 (coda riempita dalla ISR)
     // ==========================================
 
-    // Qui i comandi che arrivano dall'ESP32 (tramite interrupt) vengono "processati" e inseriti in un "buffer locale" che verrà mandata alla funzione Process_Command che eseguirà i comandi
-    // NB i comandi di stop e emergency eseguono Motors_kill direttamente nell'interrupt per evitare che il drone si disattivi in ritardo (anche HeartBeat)
+    // La catena è la seguente: 1 byte viene mandato tramite UART all'H7 e viene salvato in esp32_rx_byte. Siccome arriva un byte, si attiva HAL_UART_RxCpltCallback.
+    // In questa funzione i byte in arrivo vengono inseriti in un buffer "rx_line[64]" fino a quando non arriva un "\n" e successivamente si riarma la ricezione con HAL_UART_Receive_IT. Per essere più sicuri che i pacchetti
+    // non vengano persi, salviamo 3 messaggi (ciascuno al massimo da 64 byte) in rx_queue[4][64]. Inoltre i messaggi di spegnimento, spegnimento di emergenza e HeartBeat vengono processati direttamente nel interrupt,
+    // e non vengono dunque messi nella coda.
+
+    // Nel while qui sotto utilizziamo 2 indici rx_q_tail: utilizzata dal main, è l'indice del prossimo comando da eseguire in Process_Command(). rx_q_head: utilizzata dalla ISR indica
+    // il prossimo slot in cui scrivere. Fino a quando ci sono dei messaggi nella coda il while è attivo e carica in ordine in local_buffer l'istruzione da eseguire.
+
     while (rx_q_tail != rx_q_head) {						// rx_q_head è una variabile che viene aumentata dall'ISR
       char local_buffer[RX_LINE_LEN];
       strncpy(local_buffer, rx_queue[rx_q_tail], RX_LINE_LEN - 1);
